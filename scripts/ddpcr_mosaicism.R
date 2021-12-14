@@ -49,7 +49,7 @@ for (dataFile in ddpcr_files){
     dplyr::rename(droplets = accepted_droplets) %>%
     # Add on target (reference or variant)
     left_join(mosaicism_targets %>%
-                select(target, target_category), 
+                select(target, target_category, assay), 
               by = "target")
   ddpcr_mosaic_data <-rbind(ddpcr_mosaic_data, tmp_dat)
   rm(tmp_dat)
@@ -58,9 +58,12 @@ for (dataFile in ddpcr_files){
 # Get one row per sample well.
 
 mosaic_data_wider <- ddpcr_mosaic_data %>% 
-  pivot_wider(id_cols = c(worksheet_well_sample, worksheet, well, sample),
+  pivot_wider(id_cols = c(worksheet_well_sample, worksheet, well, sample,
+                          assay),
               names_from = target_category,
               values_from = c(droplets, positives, 
+                              # Channel 1 +, channel 2 negative (FAM+, VIC-)
+                              ch1_ch2_2,
                               concentration,
                               copies_per20u_l_well,
                               fractional_abundance, 
@@ -72,7 +75,9 @@ mosaic_data_wider <- ddpcr_mosaic_data %>%
   # Remove columns with duplicated values
   select(-c("reference_fractional_abundance", 
             "reference_poisson_fractional_abundance_max",
-            "reference_poisson_fractional_abundance_min"))
+            "reference_poisson_fractional_abundance_min",
+            "reference_ch1_ch2_2")) %>%
+  dplyr::rename(fam_positives = "variant_ch1_ch2_2")
 
 #########################
 # Get NGS mosaicism percentages 
@@ -93,15 +98,14 @@ ngs_vs_ddpcr <- mosaic_data_wider %>%
 # Plot results
 ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
                          y = variant_fractional_abundance)) +
-  geom_point(size = 2, fill = "white", colour = "black",
-             alpha = 0.5) +
   geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min,
                     ymax = variant_poisson_fractional_abundance_max),
                 alpha = 0.2) +
-  scale_x_continuous(limits = c(0, 12),
-                     breaks = seq(from = 0, to = 12, by = 1)) +
-  scale_y_continuous(limits = c(0, 12),
-                     breaks = seq(from = 0, to = 12, by = 1)) +
+  geom_point(size = 2, pch = 21, fill = "white") +
+  scale_x_continuous(limits = c(0, 11),
+                     breaks = seq(from = 0, to = 11, by = 1)) +
+  scale_y_continuous(limits = c(0, 11),
+                     breaks = seq(from = 0, to = 11, by = 1)) +
   geom_abline(linetype = "dashed") +
   theme_bw() +
   labs(x = "ddPCR (%)", y = "NGS (%)",
@@ -124,7 +128,7 @@ mosaic_data_wider %>%
       filter(worksheet_well_sample %in% analysis_wells$worksheet_well_sample) %>%
       mutate(sample_type = "patient_sample")) %>%
   ggplot(aes(x = reorder(worksheet_well_sample, variant_positives),
-             y = variant_positives, 
+             y = fam_positives, 
              colour = sample_type)) +
   geom_point() +
   theme_bw() +
@@ -136,9 +140,10 @@ mosaic_data_wider %>%
   scale_y_continuous(limits = c(0, 300),
                      breaks = c(0, 10, 50, 100, 200, 300)) +
   labs(x = "",
-       y = "Positive droplets for variant") +
-  geom_hline(yintercept = 10, linetype = "dashed") +
-  geom_hline(yintercept = 50, linetype = "dashed")
+       y = "FAM+ droplets",
+       title = "FAM positive droplets in samples")
+  #geom_hline(yintercept = 10, linetype = "dashed") +
+  #geom_hline(yintercept = 50, linetype = "dashed")
 
 mosaic_data_wider %>%
   # Get single well data
@@ -150,5 +155,39 @@ mosaic_data_wider %>%
   labs(x = "",
        y = "Positive droplets (variant)",
        title = "Spread of results for normal controls")
+
+#########################
+# Concentration of normal controls 
+#########################
+
+# I was aiming for 25ng input to each 22ul well. Only 20ul is converted
+# into droplets. Assuming a concentration of 1.14ng/ul, that's 22.7ng
+# being measured by the reader.
+# Predicted number of copies detected:
+predicted_copies <- (22.7*1000)/3.3
+
+mosaic_data_wider %>%
+  filter(substr(well, 1, 1) != "M" &
+           # Exclude worksheets which did not have 25ng input
+           !worksheet %in% c("21-0374", "21-2298") &
+           sample == "20RG-209G0042" &
+           reference_concentration != "No Call") %>%
+  ggplot(aes(x = reorder(worksheet_well_sample, reference_copies_per20u_l_well),
+              y = reference_copies_per20u_l_well)) +
+  geom_point(size = 2, pch =21) +
+  theme_bw() +
+  theme(axis.text.x = element_blank()) +
+  ylim(0, 15000) +
+  geom_hline(yintercept = predicted_copies,
+             linetype = "dashed")
+
+test <- mosaic_data_wider %>%
+  filter(substr(well, 1, 1) != "M" &
+           # Exclude worksheets which did not have 25ng input
+           !worksheet %in% c("21-0374", "21-2298") &
+           sample == "20RG-209G0042" &
+           reference_concentration != "No Call") %>%
+  select(worksheet, well, sample, assay,
+         reference_concentration)
 
 #########################
