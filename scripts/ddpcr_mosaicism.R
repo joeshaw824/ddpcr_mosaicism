@@ -10,6 +10,7 @@
 
 library(tidyverse)
 library(readxl)
+library(ggpubr)
 
 setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/")
 
@@ -29,8 +30,7 @@ analysis_wells <- read_csv(
                                        sep = "_"),
          identity = factor(identity, levels = c("NTC",
                                                 "normal",
-                                                "patient",
-                                                "positive_control")))
+                                                "patient")))
 
 #########################
 # Read in ddPCR data 
@@ -106,7 +106,7 @@ ngs_vs_ddpcr <- mosaic_data_wider %>%
             by = "sample")
 
 # Plot all results
-ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
+ddpcr_ngs_plot <- ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
                          y = variant_fractional_abundance)) +
   geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min,
                     ymax = variant_poisson_fractional_abundance_max),
@@ -119,40 +119,21 @@ ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
   geom_abline(linetype = "dashed") +
   theme_bw() +
   theme(panel.grid = element_blank()) +
-  labs(x = "NGS read counter (%)", y = "ddPCR (%)",
-       title = "ddPCR vs NGS read counter results")
+  labs(x = "NGS read counter variant fraction (%)", y = "ddPCR variant fraction (%)",
+       title = "ddPCR and NGS results for 32 samples") +
+  ggpubr::stat_cor(method = "pearson", label.x = 8, label.y = 2)
+
+ggsave(plot = ddpcr_ngs_plot, 
+       filename = "ddpcr_vs_ngs.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
 
 #########################
 # FAM positive droplets detected 
 #########################
 
-# Number of single positive droplets in samples
-mosaic_data_wider %>%
-      filter(worksheet_well_sample %in% 
-               analysis_wells$worksheet_well_sample) %>%
-  left_join(analysis_wells %>%
-              select(worksheet_well_sample, identity),
-            by = "worksheet_well_sample") %>%
-  arrange(identity, fam_positives) %>%
-  mutate(worksheet_well_sample = factor(worksheet_well_sample,
-                                        levels = c(worksheet_well_sample))) %>%
-  ggplot(aes(x = worksheet_well_sample,
-             y = fam_positives,
-             colour = identity)) +
-  geom_point(size = 2) +
-  theme_bw() +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        legend.position = "bottom",
-        panel.grid = element_blank(),
-        legend.title = element_blank()) +
-  labs(x = "",
-       y = "FAM+VIC- droplets",
-       title = "FAM positive only droplets in samples") +
-  ylim(-10, 400)
-
-# Number of double positive droplets in samples
-mosaic_data_wider %>%
+# Data with sample identities included
+mosaic_analysis_data <- mosaic_data_wider %>%
   filter(worksheet_well_sample %in% 
            analysis_wells$worksheet_well_sample) %>%
   left_join(analysis_wells %>%
@@ -160,11 +141,14 @@ mosaic_data_wider %>%
             by = "worksheet_well_sample") %>%
   arrange(identity, variant_positives) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
-                                        levels = c(worksheet_well_sample))) %>%
-  ggplot(aes(x = worksheet_well_sample,
-             y = variant_positives,
-             colour = identity)) +
-  geom_point(size = 2) +
+                                        levels = c(worksheet_well_sample)))
+
+fam_positive_plot <- ggplot(mosaic_analysis_data, aes(x = worksheet_well_sample,
+             y = variant_positives)) +
+  scale_fill_manual(values = c("#FFFFFF", "#999999", "#000000")) +
+  geom_point(pch = 21, aes(fill = identity),
+             colour = "black",
+             size = 2) +
   theme_bw() +
   theme(axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
@@ -172,7 +156,28 @@ mosaic_data_wider %>%
         panel.grid = element_blank(),
         legend.title = element_blank()) +
   labs(x = "",
-       y = "FAM+ droplets",
-       title = "Positive droplets in samples")
+       y = "FAM+VIC- and FAM+VIC+ droplets",
+       title = "FAM positive droplets in samples") +
+  ylim(0, 600)
+
+ggsave(plot = fam_positive_plot, 
+       filename = "fam_positives.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
+
+#########################
+
+mosaic_analysis_data %>%
+  group_by(identity) %>%
+  summarise(count = n())
+
+patients_only <- mosaic_analysis_data %>%
+  filter(identity == "patient")
+
+normals_only <- mosaic_analysis_data %>%
+  filter(identity == "normal")
+
+ntc_only <- mosaic_analysis_data %>%
+  filter(identity == "NTC")
 
 #########################
