@@ -27,6 +27,10 @@ analysis_wells <- read_csv(
          identity = factor(identity, levels = c("NTC",
                                                 "normal",
                                                 "patient")))
+wells_for_ngs_comparison <- read_csv(
+  "ddpcr_mosaicism/resources/ddpcr_wells_ngs_comparison.csv") %>%
+  mutate(worksheet_well_sample = paste(worksheet, well, sample, 
+                                sep = "_"))
 
 #########################
 # Read in ddPCR data 
@@ -60,10 +64,12 @@ mosaic_data_wider <- ddpcr_mosaic_data %>%
                           assay),
               names_from = target_category,
               values_from = c(droplets, positives, 
-                              # Channel 1 +, channel 2 - (FAM+, VIC-)
+                              # Channel 1 +, channel 2 - (FAM+, VIC-), blue
                               ch1_ch2_2,
-                              # Channel 1 +, channel 2 + (FAM+, VIC+)
+                              # Channel 1 +, channel 2 + (FAM+, VIC+), orange
                               ch1_ch2,
+                              # Channel 1 -, channel 2 + (FAM-, VIC+), green
+                              ch1_ch2_3,
                               concentration,
                               copies_per20u_l_well,
                               fractional_abundance, 
@@ -77,9 +83,12 @@ mosaic_data_wider <- ddpcr_mosaic_data %>%
             "reference_poisson_fractional_abundance_max",
             "reference_poisson_fractional_abundance_min",
             "reference_ch1_ch2_2",
-            "reference_ch1_ch2")) %>%
+            "reference_ch1_ch2",
+            "reference_ch1_ch2_3")) %>%
   dplyr::rename(fam_positives = "variant_ch1_ch2_2",
-                double_positives = "variant_ch1_ch2")
+                double_positives = "variant_ch1_ch2",
+                vic_positives = "variant_ch1_ch2_3") %>%
+  mutate(sample_assay = paste0(sample, "_", assay))
 
 #########################
 # Get NGS mosaicism percentages 
@@ -94,10 +103,12 @@ ngs_results <- read_csv("ddpcr_mosaicism/resources/ngs_results.csv") %>%
   select(sample, mosaic_miner_vaf, rc_vaf, ngs_percent,
          mosaic_miner_percent)
 
-
 ngs_vs_ddpcr <- mosaic_data_wider %>%
-  filter(sample %in% ngs_results$sample) %>%
-  filter(worksheet_well_sample %in% analysis_wells$worksheet_well_sample) %>%
+  # When a sample has more than 1 ddPCR replicate, the merged well value is 
+  # used. Some samples only had enough for 1 ddPCR well, so merged values 
+  # were not calculated in Quantasoft.
+  filter(worksheet_well_sample %in% 
+           wells_for_ngs_comparison$worksheet_well_sample) %>%
   left_join(ngs_results %>%
               select(sample, ngs_percent, mosaic_miner_percent),
             by = "sample")
@@ -209,25 +220,42 @@ ggsave(plot = fam_only_plot,
        device= 'tiff')
 
 #########################
-# Values for validation document
+# Values for validation document "specificity" table
 #########################
 
-# Numbers of wells
-mosaic_analysis_data %>%
-  group_by(identity) %>%
-  summarise(count = n())
+# Number of patient samples tested (includes the 10G07516 control which was 
+# not tested by NGS)
 
 patients_only <- mosaic_analysis_data %>%
   filter(identity == "patient")
 
+length(unique(patients_only$sample_assay))
+
+# Number of normal samples tested
+
 normals_only <- mosaic_analysis_data %>%
   filter(identity == "normal")
 
-ntc_only <- mosaic_analysis_data %>%
-  filter(identity == "NTC")
+# Values for validation text#
+mosaic_analysis_data %>%
+  group_by(identity) %>%
+  summarise(count = n())
+
+#########################
+# FAM-VIC+ droplets detected
+#########################
 
 mosaic_analysis_data %>%
-  filter(identity == "patient" &
-           variant_positives < 24)
+  filter(identity != "NTC") %>%
+  ggplot(aes(x = reorder(worksheet_well_sample,vic_positives), y = vic_positives)) +
+  geom_point() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank()) +
+  ylim(0, 13000) +
+  geom_hline(yintercept = 3000, linetype = "dashed")
+
+# All 7 samples with fewer than 3000 VIC only droplets are patient 
+# samples with confirmed variants.
 
 #########################
