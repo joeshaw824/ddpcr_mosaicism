@@ -122,10 +122,10 @@ ddpcr_ngs_plot <- ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
                     ymax = variant_poisson_fractional_abundance_max),
                 alpha = 0.2) +
   geom_point(size = 2, pch = 21, fill = "white") +
-  scale_x_continuous(limits = c(0, 11),
-                     breaks = seq(from = 0, to = 11, by = 1)) +
-  scale_y_continuous(limits = c(0, 11),
-                     breaks = seq(from = 0, to = 11, by = 1)) +
+  #scale_x_continuous(limits = c(0, 11),
+                     #breaks = seq(from = 0, to = 11, by = 1)) +
+  #scale_y_continuous(limits = c(0, 11),
+                     #breaks = seq(from = 0, to = 11, by = 1)) +
   geom_abline(linetype = "dashed") +
   theme_bw() +
   theme(panel.grid = element_blank()) +
@@ -152,6 +152,8 @@ mosaic_analysis_data <- mosaic_data_wider %>%
   arrange(identity, variant_positives) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
                                         levels = c(worksheet_well_sample)))
+
+duplicated(mosaic_data_wider$worksheet_well_sample)
 
 fam_positive_plot <- ggplot(mosaic_analysis_data, aes(x = worksheet_well_sample,
              y = variant_positives)) +
