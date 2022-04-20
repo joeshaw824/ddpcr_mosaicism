@@ -20,6 +20,11 @@ setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/
 
 mosaicism_targets <- read_csv("ddpcr_mosaicism/resources/mosaicism_targets.csv")
 
+mosaicism_assays <- mosaicism_targets %>%
+  pivot_wider(id_cols = assay,
+              names_from = target_category,
+              values_from = c(target, fluorophore))
+
 analysis_wells <- read_csv(
   "ddpcr_mosaicism/resources/mosaicism_analysis_wells.csv") %>%
   mutate(worksheet_well_sample = paste(worksheet, well, sample, 
@@ -60,6 +65,7 @@ for (dataFile in ddpcr_files){
 }
 
 mosaic_data_wider <- ddpcr_mosaic_data %>% 
+  filter(!is.na(target_category)) %>%
   pivot_wider(id_cols = c(worksheet_well_sample, worksheet, well, sample,
                           assay),
               names_from = target_category,
@@ -74,7 +80,8 @@ mosaic_data_wider <- ddpcr_mosaic_data %>%
                               copies_per20u_l_well,
                               fractional_abundance, 
                               poisson_fractional_abundance_max,
-                              poisson_fractional_abundance_min),
+                              poisson_fractional_abundance_min,
+                              threshold),
               # Use names_glue to keep new columns names with naming
               # convention
               names_glue = "{target_category}_{.value}") %>%
@@ -152,8 +159,6 @@ mosaic_analysis_data <- mosaic_data_wider %>%
   arrange(identity, variant_positives) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
                                         levels = c(worksheet_well_sample)))
-
-duplicated(mosaic_data_wider$worksheet_well_sample)
 
 fam_positive_plot <- ggplot(mosaic_analysis_data, aes(x = worksheet_well_sample,
              y = variant_positives)) +
