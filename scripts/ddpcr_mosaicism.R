@@ -95,7 +95,25 @@ mosaic_data_wider <- ddpcr_mosaic_data %>%
   dplyr::rename(fam_positives = "variant_ch1_ch2_2",
                 double_positives = "variant_ch1_ch2",
                 vic_positives = "variant_ch1_ch2_3") %>%
-  mutate(sample_assay = paste0(sample, "_", assay))
+  mutate(sample_assay = paste0(sample, "_", assay),
+         assay_gene = sub("_.*", "", mosaic_data_wider$assay))
+
+#########################
+# Quality monitoring 
+#########################
+
+droplets_qc_plot <- mosaic_data_wider %>%
+  filter(substr(well, 1, 1) != "M") %>%
+  ggplot(aes(x = worksheet, y = variant_droplets)) +
+  geom_jitter() +
+  labs(y = "Total Droplets", x = "", title = "Droplet generation QC plot") +
+  geom_hline(yintercept = 10000, colour = "red", linetype = "dashed") +
+  theme_bw()
+
+ggsave(plot = qc_plot, 
+       filename = "droplets_qc_plot.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
 
 #########################
 # Get NGS mosaicism percentages 
@@ -129,21 +147,34 @@ ddpcr_ngs_plot <- ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
                     ymax = variant_poisson_fractional_abundance_max),
                 alpha = 0.2) +
   geom_point(size = 2, pch = 21, fill = "white") +
-  #scale_x_continuous(limits = c(0, 11),
-                     #breaks = seq(from = 0, to = 11, by = 1)) +
-  #scale_y_continuous(limits = c(0, 11),
-                     #breaks = seq(from = 0, to = 11, by = 1)) +
   geom_abline(linetype = "dashed") +
   theme_bw() +
   theme(panel.grid = element_blank()) +
   labs(x = "NGS read counter variant fraction (%)", y = "ddPCR variant fraction (%)",
        title = paste("ddPCR and NGS results for", sample_number, "mosaic patient samples")) +
-  ggpubr::stat_cor(method = "pearson", label.x = 8, label.y = 2)
+  ggpubr::stat_cor(method = "pearson", label.x = 8, label.y = 2) +
+  scale_x_continuous(limits = c(0, 19),
+  breaks = seq(from = 0, to = 19, by = 1)) +
+  scale_y_continuous(limits = c(0, 19),
+  breaks = seq(from = 0, to = 19, by = 1))
 
 ggsave(plot = ddpcr_ngs_plot, 
        filename = "ddpcr_vs_ngs.tiff",
        path = "ddpcr_mosaicism/plots/", 
        device= 'tiff')
+
+#########################
+# Service numbers 
+#########################
+
+# Samples tested
+nrow(ngs_vs_ddpcr)
+
+# Assays tested
+length(unique(mosaic_data_wider$assay))
+
+# Genes
+length(unique(mosaic_data_wider$assay_gene))
 
 #########################
 # FAM+VIC+ and FAM+VIC- droplets detected 
@@ -182,6 +213,35 @@ fam_positive_plot <- ggplot(mosaic_analysis_data, aes(x = worksheet_well_sample,
 
 ggsave(plot = fam_positive_plot, 
        filename = "fam_positive_plot.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
+
+## GNAS c.601C>T only
+
+GNAQ_c.548_only <- mosaic_analysis_data %>%
+  filter(assay == "GNAQ_c.548_G_A")
+
+gnaq_548_plot <- ggplot(GNAQ_c.548_only, aes(x = reorder(worksheet_well_sample, fam_positives),
+                                                      y = fam_positives)) +
+  scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
+  geom_point(pch = 21, aes(fill = identity),
+             colour = "black",
+             size = 3) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        legend.title = element_blank()) +
+  labs(x = "",
+       y = "FAM+VIC- and FAM+VIC+ droplets",
+       title = "GNAQ c.548 G>A") +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     limits = c(0, 1000),
+                     breaks = c(0, 10, 100, 1000, 1000))
+
+ggsave(plot = gnaq_548_plot, 
+       filename = "gnaq_548_plot.tiff",
        path = "ddpcr_mosaicism/plots/", 
        device= 'tiff')
 

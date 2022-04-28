@@ -45,3 +45,11 @@ NF1_c.7863_7864ins,NF1_c.7863_7864wt,reference,VIC
 NF1_c.7863_7864ins,NF1_c.7863_7864ins,variant,FAM
 PIK3CA_c.1132_T_C,PIK3CA_c.1132_T,reference,VIC
 PIK3CA_c.1132_T_C,PIK3CA_c.1132_C,variant,FAM
+RHOA_c.514_G_A,RHOA_c.514_G,reference,VIC
+RHOA_c.514_G_A,RHOA_c.514_A,variant,FAM
+ACTB_c.439_C_T,ACTB_c.439_C,reference,VIC
+ACTB_c.439_C_T,ACTB_c.439_T,variant,FAM
+ACTB_c.441_442insGGT,ACTB_c.441_442,reference,VIC
+ACTB_c.441_442insGGT,ACTB_c.441_442insGGT,variant,FAM
+IDH1_c.394_C_T,IDH1_c.394_C,reference,VIC
+IDH1_c.394_C_T,IDH1_c.394_T,variant,FAM
