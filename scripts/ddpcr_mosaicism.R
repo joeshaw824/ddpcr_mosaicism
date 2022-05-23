@@ -4,6 +4,9 @@
 ## Joseph.Shaw@gosh.nhs.uk
 ################################################################################
 
+# Notes
+# Use base R trimws to trim whitespace from the Experiment name
+
 #########################
 # Set working directory
 #########################
@@ -37,8 +40,13 @@ wells_for_ngs_comparison <- read_csv(
   mutate(worksheet_well_sample = paste(worksheet, well, sample, 
                                 sep = "_"))
 
+assay_information <- read_excel(
+  path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
+  sheet = "sequences") %>%
+  janitor::clean_names()
+
 #########################
-# Read in ddPCR data 
+# Read in ddPCR mosaic data 
 #########################
 
 ddpcr_files <- list.files(path = "ddpcr_mosaicism/data")
@@ -55,7 +63,6 @@ for (dataFile in ddpcr_files){
            # Add a unique identifier for each well.
            worksheet_well_sample = paste(worksheet, well, sample, 
                                          sep = "_")) %>%
-    dplyr::rename(droplets = accepted_droplets) %>%
     # Add on target (reference or variant)
     left_join(mosaicism_targets %>%
                 select(target, target_category, assay), 
@@ -64,39 +71,37 @@ for (dataFile in ddpcr_files){
   rm(tmp_dat)
 }
 
-mosaic_data_wider <- ddpcr_mosaic_data %>% 
+#########################
+# Modify ddPCR mosaic data 
+#########################
+
+mosaic_data_mod <- ddpcr_mosaic_data %>%
+  # Change concentration from type chr to type numeric. Rename to be explicit.
+  mutate(copies_per_ul = as.numeric(ifelse(concentration == "No Call", NA, concentration))) %>%
+  select(-concentration) %>%
+  dplyr::rename(total_droplets = accepted_droplets,
+                # "total_conf_max/min" refer to the "concentration" field.
+                # "total_conc_max" is the maximum value of the concentration with total error.
+                # I renamed these fields to be consistent with the naming convention in
+                # other columns.
+                total_conc_max = total_conf_max,
+                total_conc_min = total_conf_min,
+                poisson_conc_max = poisson_conf_max,
+                poisson_conc_min = poisson_conf_min,
+                copies_per_20ul_well = copies_per20u_l_well)
+
+mosaic_data_wider <- mosaic_data_mod %>% 
   filter(!is.na(target_category)) %>%
   pivot_wider(id_cols = c(worksheet_well_sample, worksheet, well, sample,
-                          assay),
+                          assay, experiment),
               names_from = target_category,
-              values_from = c(droplets, positives, 
-                              # Channel 1 +, channel 2 - (FAM+, VIC-), blue
-                              ch1_ch2_2,
-                              # Channel 1 +, channel 2 + (FAM+, VIC+), orange
-                              ch1_ch2,
-                              # Channel 1 -, channel 2 + (FAM-, VIC+), green
-                              ch1_ch2_3,
-                              concentration,
-                              copies_per20u_l_well,
-                              fractional_abundance, 
-                              poisson_fractional_abundance_max,
-                              poisson_fractional_abundance_min,
-                              threshold),
+              # Include all values in case we need them later
+              values_from = -c(worksheet_well_sample, worksheet, well, sample,
+                               assay, experiment, target_category),
               # Use names_glue to keep new columns names with naming
               # convention
               names_glue = "{target_category}_{.value}") %>%
-  # Remove columns with duplicated values
-  select(-c("reference_fractional_abundance", 
-            "reference_poisson_fractional_abundance_max",
-            "reference_poisson_fractional_abundance_min",
-            "reference_ch1_ch2_2",
-            "reference_ch1_ch2",
-            "reference_ch1_ch2_3")) %>%
-  dplyr::rename(fam_positives = "variant_ch1_ch2_2",
-                double_positives = "variant_ch1_ch2",
-                vic_positives = "variant_ch1_ch2_3") %>%
-  mutate(sample_assay = paste0(sample, "_", assay),
-         assay_gene = sub("_.*", "", mosaic_data_wider$assay))
+  mutate(assay_gene = sub("_.*", "", assay))
 
 #########################
 # Quality monitoring 
@@ -104,19 +109,24 @@ mosaic_data_wider <- ddpcr_mosaic_data %>%
 
 droplets_qc_plot <- mosaic_data_wider %>%
   filter(substr(well, 1, 1) != "M") %>%
-  ggplot(aes(x = worksheet, y = variant_droplets)) +
+  ggplot(aes(x = worksheet, y = variant_total_droplets)) +
   geom_jitter() +
   labs(y = "Total Droplets", x = "", title = "Droplet generation QC plot") +
   geom_hline(yintercept = 10000, colour = "red", linetype = "dashed") +
   theme_bw()
 
-ggsave(plot = qc_plot, 
+# Add timestamp
+ggsave(plot = droplets_qc_plot, 
        filename = "droplets_qc_plot.tiff",
        path = "ddpcr_mosaicism/plots/", 
        device= 'tiff')
 
+ws_data <- mosaic_data_wider %>%
+  filter(substr(well, 1, 1) != "M") %>%
+  filter(worksheet == "22-1678")
+
 #########################
-# Get NGS mosaicism percentages 
+# NGS vs ddPCR 
 #########################
 
 ngs_results <- read_csv("ddpcr_mosaicism/resources/ngs_results.csv") %>%
@@ -177,21 +187,163 @@ length(unique(mosaic_data_wider$assay))
 length(unique(mosaic_data_wider$assay_gene))
 
 #########################
-# FAM+VIC+ and FAM+VIC- droplets detected 
+# Selecting analysis wells
 #########################
 
-# Data with sample identities included
+# Analysis wells: any well where an assay was under optimal/standard conditions.
+# All wells on a single temp worksheet are included. For optimisation worksheets,
+# only wells as the optimum annealing temperature are included.
+
 mosaic_analysis_data <- mosaic_data_wider %>%
   filter(worksheet_well_sample %in% 
            analysis_wells$worksheet_well_sample) %>%
   left_join(analysis_wells %>%
               select(worksheet_well_sample, identity),
-            by = "worksheet_well_sample") %>%
+            by = "worksheet_well_sample") 
+
+# Excluding samples
+# %>% filter(!sample %in% c("21RG-278G0061", "21RG-343G0152",
+# "22RG-004G0015"))
+
+
+#########################
+# Variant concentrations
+#########################
+
+variant_conc_plot <- mosaic_analysis_data %>%
+  arrange(identity, variant_copies_per_ul) %>%
+  mutate(worksheet_well_sample = factor(worksheet_well_sample,
+                                        levels = c(worksheet_well_sample))) %>%
+  ggplot(aes(x = worksheet_well_sample,
+             y = variant_copies_per_ul)) +
+  scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
+  geom_point(pch = 21, aes(fill = identity),
+             colour = "black",
+             size = 2) +
+  geom_errorbar(aes(ymin = variant_poisson_conc_min, 
+                    ymax = variant_poisson_conc_max)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        legend.title = element_blank()) +
+  labs(x = "",
+       y = "Variant concentration (copies/ul)",
+       title = "Variant concentation in ddPCR mosaic data") +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     limits = c(0, 100),
+                     breaks = c(0, 0.4, 1, 10, 100)) +
+  geom_hline(yintercept = 0.4, linetype = "dashed")
+
+
+ggsave(plot = variant_conc_plot, 
+       filename = "variant_conc_plot.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
+
+#########################
+# Variant fractional abundances
+#########################
+
+variant_fraction_plot <- mosaic_analysis_data %>%
+  mutate(variant_fractional_abundance = ifelse(is.na(variant_fractional_abundance),
+                                               0, variant_fractional_abundance)) %>%
+  arrange(identity, variant_fractional_abundance) %>%
+  mutate(worksheet_well_sample = factor(worksheet_well_sample,
+                                        levels = c(worksheet_well_sample))) %>%
+  filter(identity != "NTC") %>%
+  ggplot(aes(x = worksheet_well_sample,
+             y = variant_fractional_abundance)) +
+  scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
+  geom_point(pch = 21, aes(fill = identity),
+             colour = "black",
+             size = 2) +
+  geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min, 
+                    ymax = variant_poisson_fractional_abundance_max)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        legend.title = element_blank()) +
+  labs(x = "",
+       y = "Variant percent (%)",
+       title = "Variant percentage in ddPCR mosaic data") +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     limits = c(0, 10),
+                     breaks = c(0, 0.1, 1, 5, 10)) +
+  geom_hline(yintercept = 0.1, linetype = "dashed")
+
+ggsave(plot = variant_fraction_plot, 
+       filename = "variant_fraction_plot.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
+
+#########################
+# Copies per well
+#########################
+
+variant_copies_plot <- mosaic_analysis_data %>%
+  arrange(identity, variant_copies_per_20ul_well) %>%
+  mutate(worksheet_well_sample = factor(worksheet_well_sample,
+                                        levels = c(worksheet_well_sample))) %>%
+  ggplot(aes(x = worksheet_well_sample,
+             y = variant_copies_per_20ul_well)) +
+  scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
+  geom_point(pch = 21, aes(fill = identity),
+             colour = "black",
+             size = 2) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom",
+        panel.grid = element_blank(),
+        legend.title = element_blank()) +
+  labs(x = "",
+       y = "Variant molecules per well",
+       title = "Variant molecules in ddPCR mosaic data") +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     limits = c(0, 6000),
+                     breaks = c(0, 10, 100, 1000, 6000)) +
+  geom_hline(yintercept = 10, linetype = "dashed")
+
+ggsave(plot = variant_copies_plot, 
+       filename = "variant_copies_plot.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
+
+# Reference copies per well
+# 25ng gDNA = 25000pg
+# 3.3pg per haploid genome
+# 25000 / 3.3 = 7575 copies per well
+
+reference_copies_plot <- mosaic_analysis_data %>%
+  ggplot(aes(x = identity, y = reference_copies_per_20ul_well))+
+  geom_boxplot() +
+  theme_bw() +
+  theme(axis.ticks.x = element_blank(),
+        panel.grid = element_blank(),
+        legend.title = element_blank()) +
+  labs(x = "",
+       y = "Reference molecules per well",
+       title = "Reference molecules in ddPCR mosaic data") +
+  geom_hline(yintercept = 7575, linetype = "dashed")
+
+ggsave(plot = reference_copies_plot, 
+       filename = "reference_copies_plot.tiff",
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff')
+
+#########################
+# All FAM+ droplets
+#########################
+
+fam_positive_plot <- mosaic_analysis_data %>%
   arrange(identity, variant_positives) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
-                                        levels = c(worksheet_well_sample)))
-
-fam_positive_plot <- ggplot(mosaic_analysis_data, aes(x = worksheet_well_sample,
+                                        levels = c(worksheet_well_sample))) %>%
+  ggplot(aes(x = worksheet_well_sample,
              y = variant_positives)) +
   scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
   geom_point(pch = 21, aes(fill = identity),
@@ -204,7 +356,7 @@ fam_positive_plot <- ggplot(mosaic_analysis_data, aes(x = worksheet_well_sample,
         panel.grid = element_blank(),
         legend.title = element_blank()) +
   labs(x = "",
-       y = "FAM+VIC- and FAM+VIC+ droplets",
+       y = "All FAM+ droplets",
        title = "FAM+ droplets in ddPCR wells") +
   scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
                      limits = c(0, 10000),
@@ -216,53 +368,17 @@ ggsave(plot = fam_positive_plot,
        path = "ddpcr_mosaicism/plots/", 
        device= 'tiff')
 
-## GNAS c.601C>T only
-
-GNAQ_c.548_only <- mosaic_analysis_data %>%
-  filter(assay == "GNAQ_c.548_G_A")
-
-gnaq_548_plot <- ggplot(GNAQ_c.548_only, aes(x = reorder(worksheet_well_sample, fam_positives),
-                                                      y = fam_positives)) +
-  scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
-  geom_point(pch = 21, aes(fill = identity),
-             colour = "black",
-             size = 3) +
-  theme_bw() +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        legend.position = "bottom",
-        panel.grid = element_blank(),
-        legend.title = element_blank()) +
-  labs(x = "",
-       y = "FAM+VIC- and FAM+VIC+ droplets",
-       title = "GNAQ c.548 G>A") +
-  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
-                     limits = c(0, 1000),
-                     breaks = c(0, 10, 100, 1000, 1000))
-
-ggsave(plot = gnaq_548_plot, 
-       filename = "gnaq_548_plot.tiff",
-       path = "ddpcr_mosaicism/plots/", 
-       device= 'tiff')
-
 #########################
-# FAM+VIC- droplets detected 
+# FAM+VIC- droplets 
 #########################
 
-# Data with sample identities included
-fam_only_data <- mosaic_data_wider %>%
-  filter(worksheet_well_sample %in% 
-           analysis_wells$worksheet_well_sample) %>%
-  left_join(analysis_wells %>%
-              select(worksheet_well_sample, identity),
-            by = "worksheet_well_sample") %>%
-  arrange(identity, fam_positives) %>%
+fam_only_plot <- mosaic_analysis_data %>%
+  # "variant_ch1_ch2_2" = Ch1+Ch2-
+  arrange(identity, variant_ch1_ch2_2) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
-                                        levels = c(worksheet_well_sample)))
-
-
-fam_only_plot <- ggplot(fam_only_data, aes(x = worksheet_well_sample,
-                                 y = fam_positives)) +
+                                        levels = c(worksheet_well_sample))) %>%
+  ggplot(aes(x = worksheet_well_sample,
+                                 y = variant_ch1_ch2_2)) +
   scale_fill_manual(values = c("#FFFFFF", "#999999", "#333333")) +
   geom_point(pch = 21, aes(fill = identity),
              colour = "black",
@@ -290,39 +406,22 @@ ggsave(plot = fam_only_plot,
 # Values for validation document "specificity" table
 #########################
 
-# Number of patient samples tested (includes the 10G07516 control which was 
-# not tested by NGS)
-
-patients_only <- mosaic_analysis_data %>%
-  filter(identity == "patient")
-
-length(unique(patients_only$sample_assay))
-
-# Number of normal samples tested
-
-normals_only <- mosaic_analysis_data %>%
-  filter(identity == "normal")
-
-# Values for validation text#
+# Updated well counts
 mosaic_analysis_data %>%
   group_by(identity) %>%
   summarise(count = n())
 
 #########################
-# FAM-VIC+ droplets detected
-#########################
 
-mosaic_analysis_data %>%
-  filter(identity != "NTC") %>%
-  ggplot(aes(x = reorder(worksheet_well_sample,vic_positives), y = vic_positives)) +
-  geom_point() +
-  theme(axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        panel.grid = element_blank()) +
-  ylim(0, 13000) +
-  geom_hline(yintercept = 3000, linetype = "dashed")
+## Patient cases with low droplet counts
 
-# All 7 samples with fewer than 3000 VIC only droplets are patient 
-# samples with confirmed variants.
+data_inspection <- mosaic_analysis_data %>%
+  filter(identity == "patient") %>%
+  arrange(variant_copies_per_ul) %>%
+  select(worksheet, well, sample,
+          assay, variant_copies_per_ul, variant_copies_per_20ul_well,
+          variant_fractional_abundance, variant_positives,
+          variant_ch1_ch2_2)
 
-#########################
+
+
