@@ -3,15 +3,8 @@
 ## Joseph.Shaw@gosh.nhs.uk / joseph.shaw3@nhs.net
 ################################################################################
 
-#########################
-# Set working directory
-#########################
-
-library(tidyverse)
-library(readxl)
-library(ggpubr)
-
-setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/")
+# Load data
+source("scripts/load_ddpcr_data.R")
 
 #########################
 # Get resources
@@ -81,28 +74,6 @@ ws_assay_ids <- read_csv("ddpcr_mosaicism/resources/worksheet_assay_ids.csv") %>
   select(worksheet, assay_id) %>%
   inner_join(targets_rearranged, by = "assay_id",
              keep = FALSE)
-
-#########################
-# Read in ddPCR mosaic data 
-#########################
-
-ddpcr_files <- list.files(path = "ddpcr_mosaicism/data")
-
-#Empty data frame
-ddpcr_mosaic_data <- data.frame()
-
-# Read and collate each worksheet csv
-for (dataFile in ddpcr_files){
-  tmp_dat <- readr::read_csv(paste0("ddpcr_mosaicism/data/",dataFile), col_names = TRUE) %>%
-    janitor::clean_names() %>%
-    # Each data file is the worksheet number. Remove ".csv" from filename
-    mutate(worksheet = substr(as.character(dataFile), 1, 7),
-           # Add a unique identifier for each well.
-           worksheet_well_sample = paste(worksheet, well, sample, 
-                                         sep = "_"))
-  ddpcr_mosaic_data <-rbind(ddpcr_mosaic_data, tmp_dat)
-  rm(tmp_dat)
-}
 
 #########################
 # Quality monitoring 
