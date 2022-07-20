@@ -133,5 +133,122 @@ for (specimen in repeated_samples) {
   make_mtdna_plots(specimen)
   
 }
- 
+
+#########################
+# Sample dilution factors
+#########################
+
+# 2 sample on 22-2399 (21RG-118G0011 and 21RG-162G0048) have a dilution factor of 250, not 500
+
+dilution_factors <- read.csv("resources/mtdna_dilution_factors.csv")
+
+#########################
+# Patient ages
+#########################
+
+# Most reliable way may be to go from referral forms
+
+#########################
+# Perform mtDNA versus gDNA calculations
+#########################
+
+recent_ws <- c("22-1854", "22-2113", "22-2399", "22-2608")
+
+recent_data <- mtdna_cleaned %>%
+  filter(worksheet %in% recent_ws & substr(well, 1, 1) == "M") %>%
+  select(worksheet, well, specimen_id, target_clean, copies_per_ul, 
+         poisson_conf_min, poisson_conf_max) %>%
+  # remove NTC wells
+  filter(!is.na(specimen_id) & !is.na(target_clean)) 
+
+recent_data_wider <- recent_data %>%
+  # Pivot wider onto one line
+  pivot_wider(id_cols = c(worksheet, specimen_id),
+              names_from = target_clean,
+              values_from = c(copies_per_ul, poisson_conf_min, poisson_conf_max)) %>%
+  # Add dilution factors
+  left_join(dilution_factors, by = c("worksheet", "specimen_id"))
+
+recent_data_calc <- recent_data_wider %>%
+  # Calculations according to Yogen's spreadsheet
+  mutate(dilution_factor = b2m_input_ng/nd1_nd4_input_ng,
+         nd1_nuclear_adjusted = copies_per_ul_ND1 * dilution_factor,
+         nd4_nuclear_adjusted = copies_per_ul_ND4 * dilution_factor,
+         nd1_copies_per_cell = (2*nd1_nuclear_adjusted) / copies_per_ul_B2M,
+         nd4_copies_per_cell = (2*nd4_nuclear_adjusted) / copies_per_ul_B2M)
+
+#########################
+# Load Yogen's results
+#########################
+
+consistent_columns <- c("worksheet", "sample", "specimin_id", "b2m_cn_merged", "nd1_cn_merged", "nd4_cn_merged",
+                        "b2m_adjusted_nd1_cn", "b2m_adjusted_nd4_cn", "mt_cn_nd1", "mt_cn_nd4")
+
+read_yogen_ws <- function(worksheet_name) {
+  
+  filepath <- "W:/MolecularGenetics/Neurogenetics/mtDNA/ddPCR/"
+  
+  output <- read_excel(path = paste0(filepath, worksheet_name, "/", worksheet_name, ".xlsm"),
+                       sheet = "mtDNA % calc", skip = 1) %>%
+    janitor::clean_names() %>%
+    mutate(worksheet = worksheet_name) %>%
+    select(all_of(consistent_columns))
+  
+}
+
+ws_22_1854 <- read_yogen_ws("22-1854")
+
+ws_22_2399 <- read_yogen_ws("22-2399")
+
+ws_22_2608 <- read_yogen_ws("22-2608")
+
+# Have to do individually because of non-standard name
+ws_22_2113 <- read_excel(path = paste0(filepath, "22-2113/22-2113_yp.xlsm"),
+                         sheet = "mtDNA % calc", skip = 1) %>%
+  janitor::clean_names() %>%
+  mutate(worksheet = "22-2113") %>%
+  select(all_of(consistent_columns))
+
+yogen_results <- rbind(ws_22_1854, ws_22_2399, ws_22_2608, ws_22_2113) %>%
+  mutate(specimen_id = str_extract(specimin_id, pattern = "..RG-...G....")) %>%
+  filter(!is.na(specimen_id))
+
+#########################
+# Check against Yogen's results
+#########################
+
+result_comparison <- recent_data_calc %>%
+  full_join(yogen_results, by = c("worksheet", "specimen_id")) %>%
+  mutate(nd1_cn_diff = abs(b2m_adjusted_nd1_cn - nd1_nuclear_adjusted),
+         nd4_cn_diff = abs(b2m_adjusted_nd4_cn - nd4_nuclear_adjusted),
+         nd1_copies_per_cell_diff = round(abs(mt_cn_nd1 - nd1_copies_per_cell), 0),
+         nd4_copies_per_cell_diff = round(abs(mt_cn_nd4 - nd4_copies_per_cell), 0))
+
+# There is a discrepancy for 21RG-110G0081 ND1 calculations on 22-2113, because Yogen didn't use merged vallues
+# for this sample.
+
+#########################
+# Generate plots
+#########################
+
+specimen <- "20RG-289G0083"
+
+test_df <- recent_data_calc %>%
+  filter(specimen_id == specimen) %>%
+  select(worksheet, specimen_id, nd1_copies_per_cell, nd4_copies_per_cell) %>%
+  pivot_longer(cols = c(nd1_copies_per_cell, nd4_copies_per_cell),
+               names_to = "target_conc",
+               values_to = "concentration") %>%
+  mutate(target = substr(target_conc, 1, 3),
+         worksheet_target = paste0(worksheet, sep = "_", target))
+
+y_upper <- max(test_df$concentration)
+
+test_df %>%
+  ggplot(aes(x = worksheet_target, y = concentration, colour = target)) +
+  geom_point(size = 2) +
+  ylim(0, y_upper+100) +
+  labs(x = "", y = "Copies per diploid nuclear genome",
+       title = paste0(specimen, ": mtDNA copies per diploid nuclear genome"))
+
 #########################
