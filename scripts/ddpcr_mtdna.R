@@ -30,7 +30,7 @@ mtdna_ws <- c("22-2608", "22-2399", "22-2113", "22-1854",
 
 mtdna_data <- ddpcr_data %>%
   filter(worksheet %in% mtdna_ws) %>%
-  filter(accepted_droplets > 10000) %>%
+  # filter(accepted_droplets > 10000) %>%
   mutate(worksheet_well = paste(worksheet, well, sep = "_"))
 
 #########################
@@ -90,7 +90,7 @@ make_mtdna_plots <- function(specimen) {
     ggplot(aes(x = worksheet_well, y = copies_per_ul)) +
     geom_point() +
     geom_errorbar(aes(ymin = poisson_conf_min, ymax = poisson_conf_max)) +
-    theme(axis.text.x = element_text(angle = 90)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust= 1)) +
     labs(title = paste0(specimen, ": B2M Concentration (copies/ul)"), x = "")
   
   nd4_plot <- mtdna_cleaned %>%
@@ -98,7 +98,7 @@ make_mtdna_plots <- function(specimen) {
     ggplot(aes(x = worksheet_well, y = copies_per_ul)) +
     geom_point() +
     geom_errorbar(aes(ymin = poisson_conf_min, ymax = poisson_conf_max)) +
-    theme(axis.text.x = element_text(angle = 90)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust= 1)) +
     labs(title = paste0(specimen,": ND4 Concentration (copies/ul)"), x = "")
   
   nd1_plot <- mtdna_cleaned %>%
@@ -106,26 +106,27 @@ make_mtdna_plots <- function(specimen) {
     ggplot(aes(x = worksheet_well, y = copies_per_ul)) +
     geom_point() +
     geom_errorbar(aes(ymin = poisson_conf_min, ymax = poisson_conf_max)) +
-    theme(axis.text.x = element_text(angle = 90)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust= 1)) +
     labs(title = paste0(specimen,": ND1 Concentration (copies/ul)"), x = "")
   
-  mtdna_plots <- ggpubr::ggarrange(b2m_plot, nd4_plot,
-                                   nd1_plot,
-                                   ncol = 2, nrow = 2, align = "v")
+  mtdna_plots <- ggpubr::ggarrange(b2m_plot, nd1_plot, nd4_plot,
+                                   ncol = 1, nrow = 3, align = "v")
   ggsave(plot = mtdna_plots, 
          filename = paste0(specimen, "_plots_",
                            format(Sys.time(), "%Y%m%d_%H%M%S"),
                            ".tiff"),
          path = "plots/mtdna_plots/", device='tiff', dpi=100,
          units = "in",
-         width = 12.5,
-         height = 7)
+         width = 7,
+         height = 12.5)
   
 }
 
-repeated_samples <- c("21RG-118G0019", "21RG-117G0167", "21RG-119G0052",
-                      "21RG-048G0053", "21RG-118G0184", "21RG-119G0051",
-                      "21RG-110G0081", "21RG-118G0011")
+repeated_samples <- c("21RG-048G0053", "21RG-118G0184", "21RG-119G0051",
+                      "21RG-110G0081", "21RG-118G0011", "21RG-118G0019",
+                      "21RG-117G0167", "21RG-119G0052", "21RG-118G0185",
+                      "21RG-119G0059", "21RG-162G0048", "21RG-175G0105",
+                      "20RG-289G0083", "21RG-130G0082", "21RG-267G0027")
 
 for (specimen in repeated_samples) {
   
