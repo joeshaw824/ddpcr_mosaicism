@@ -76,26 +76,6 @@ ws_assay_ids <- read_csv("ddpcr_mosaicism/resources/worksheet_assay_ids.csv") %>
              keep = FALSE)
 
 #########################
-# Quality monitoring 
-#########################
-
-droplets_qc_plot <- ddpcr_mosaic_data %>%
-  filter(substr(well, 1, 1) != "M") %>%
-  # Remove duplicate rows for channel 1 and channel 2
-  distinct(worksheet_well_sample, .keep_all = TRUE) %>%
-  ggplot(aes(x = worksheet, y = accepted_droplets)) +
-  geom_jitter() +
-  labs(y = "Total Droplets", x = "", title = "Droplet generation QC plot") +
-  geom_hline(yintercept = 10000, colour = "red", linetype = "dashed") +
-  theme_bw() +
-  theme(axis.text.x = element_text(angle = 90))
-
-ggsave(plot = droplets_qc_plot, 
-       filename = paste0("droplets_qc_plot_", format(Sys.time(), "%Y%m%d"), ".tiff"),
-       path = "ddpcr_mosaicism/plots/", 
-       device= 'tiff')
-
-#########################
 # Add targets to previous data 
 #########################
 
