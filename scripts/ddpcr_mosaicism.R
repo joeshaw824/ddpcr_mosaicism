@@ -3,6 +3,8 @@
 ## Joseph.Shaw@gosh.nhs.uk / joseph.shaw3@nhs.net
 ################################################################################
 
+setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/ddpcr_mosaicism/")
+
 # Load data
 source("scripts/load_ddpcr_data.R")
 
@@ -10,7 +12,7 @@ source("scripts/load_ddpcr_data.R")
 # Get resources
 #########################
 
-mosaicism_targets <- read_excel("ddpcr_mosaicism/resources/mosaic_targets_v2.xlsx")
+mosaicism_targets <- read_excel("resources/mosaic_targets_v2.xlsx")
 # Add check to make sure assay_id is unique
 
 #mosaicism_assays <- mosaicism_targets %>%
@@ -19,14 +21,14 @@ mosaicism_targets <- read_excel("ddpcr_mosaicism/resources/mosaic_targets_v2.xls
               #values_from = c(target, fluorophore))
 
 analysis_wells <- read_csv(
-  "ddpcr_mosaicism/resources/mosaicism_analysis_wells.csv") %>%
+  "resources/mosaicism_analysis_wells.csv") %>%
   mutate(worksheet_well_sample = paste(worksheet, well, sample, 
                                        sep = "_"),
          identity = factor(identity, levels = c("NTC",
                                                 "normal",
                                                 "patient")))
 wells_for_ngs_comparison <- read_csv(
-  "ddpcr_mosaicism/resources/ddpcr_wells_ngs_comparison.csv") %>%
+  "resources/ddpcr_wells_ngs_comparison.csv") %>%
   mutate(worksheet_well_sample = paste(worksheet, well, sample, 
                                 sep = "_"))
 
@@ -70,7 +72,7 @@ targets_rearranged <- rbind(targets_ch1, targets_ch2)
 # worksheet, assay_id and assay_name.
 # Not that neat but it will get all the data in the same format.
 
-ws_assay_ids <- read_csv("ddpcr_mosaicism/resources/worksheet_assay_ids.csv") %>%
+ws_assay_ids <- read_csv("resources/worksheet_assay_ids.csv") %>%
   select(worksheet, assay_id) %>%
   inner_join(targets_rearranged, by = "assay_id",
              keep = FALSE)
@@ -84,7 +86,7 @@ ws_assay_ids <- read_csv("ddpcr_mosaicism/resources/worksheet_assay_ids.csv") %>
 previous_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", "21-4327", "21-4391", "21-4435", 
                     "21-4459", "22-0227", "22-0271", "22-0873", "22-1066", "22-1395")
 
-previous_data <- ddpcr_mosaic_data %>%
+previous_data <- ddpcr_data %>%
   filter(worksheet %in% previous_worksheets) %>%
   left_join(ws_assay_ids,
             by = c("worksheet", "target")) %>%
@@ -96,7 +98,7 @@ previous_data <- ddpcr_mosaic_data %>%
 # Add targets to recent data 
 #########################
 
-new_data <- ddpcr_mosaic_data %>%
+new_data <- ddpcr_data %>%
   filter(!worksheet %in% previous_worksheets) %>%
   dplyr::rename(assay_id = experiment) %>%
   left_join(targets_rearranged, 
@@ -111,9 +113,6 @@ data_with_targets <- rbind(previous_data, new_data)
 #########################
 
 mosaic_data_mod <- data_with_targets %>%
-  # Change concentration from type chr to type numeric. Rename to be explicit.
-  mutate(copies_per_ul = as.numeric(ifelse(concentration == "No Call", NA, concentration))) %>%
-  select(-concentration) %>%
   dplyr::rename(total_droplets = accepted_droplets,
                 # "total_conf_max/min" refer to the "concentration" field.
                 # "total_conc_max" is the maximum value of the concentration with total error.
@@ -141,7 +140,7 @@ mosaic_ddpcr_db <- mosaic_data_mod %>%
          assay_gene = sub("c.*", "", assay_gene))
 
 write.csv(mosaic_ddpcr_db,
-          file = paste0("ddpcr_mosaicism/database/mosaic_ddpcr_db_", 
+          file = paste0("database/mosaic_ddpcr_db_", 
                         format(Sys.time(), "%Y%m%d"), ".csv"),
           row.names = FALSE)
 
@@ -569,8 +568,11 @@ reportedpatientsonly <- mosaic_analysis_data %>%
   filter(identity == "patient") %>%
   filter(variant_fractional_abundance > 0.29)
 
+patients_only <- mosaic_analysis_data %>%
+  filter(identity == "patient") 
+
 # Samples tested
-length(unique(patientsonly$sample))
+length(unique(patients_only$sample))
 
 # Assays tested
 length(unique(patientsonly$assay_id))
@@ -586,12 +588,6 @@ mosaic_analysis_data %>%
   #filter(assay_name == "GNAQ_c.548GA") %>%
   group_by(identity) %>%
   summarise(count = n())
-
-
-max(reportedpatientsonly$variant_fractional_abundance, na.rm = TRUE)
-min(reportedpatientsonly$variant_fractional_abundance, na.rm = TRUE)
-median(reportedpatientsonly$variant_fractional_abundance, na.rm = TRUE)
-
 
 
 

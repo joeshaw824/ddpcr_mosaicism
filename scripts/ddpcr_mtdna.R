@@ -149,6 +149,13 @@ dilution_factors <- read.csv("resources/mtdna_dilution_factors.csv")
 # Most reliable way may be to go from referral forms
 
 #########################
+# Definitions
+#########################
+
+# b2m_adjusted_nd1_cn: the dilution-adjusted concentration of ND1 mitochondrial DNA
+# mt_cn_nd1: the number of mitochondrial genomes per diploid nuclear genome
+
+#########################
 # Perform mtDNA versus gDNA calculations
 #########################
 
@@ -172,10 +179,11 @@ recent_data_wider <- recent_data %>%
 recent_data_calc <- recent_data_wider %>%
   # Calculations according to Yogen's spreadsheet
   mutate(dilution_factor = b2m_input_ng/nd1_nd4_input_ng,
-         nd1_nuclear_adjusted = copies_per_ul_ND1 * dilution_factor,
-         nd4_nuclear_adjusted = copies_per_ul_ND4 * dilution_factor,
-         nd1_copies_per_cell = (2*nd1_nuclear_adjusted) / copies_per_ul_B2M,
-         nd4_copies_per_cell = (2*nd4_nuclear_adjusted) / copies_per_ul_B2M)
+         # I've kept the names of these variables consistent with Yogen's spreadsheet
+         b2m_adjusted_nd1_cn_joe = copies_per_ul_ND1 * dilution_factor,
+         b2m_adjusted_nd4_cn_joe = copies_per_ul_ND4 * dilution_factor,
+         mt_cn_nd1_joe = (2*b2m_adjusted_nd1_cn_joe) / copies_per_ul_B2M,
+         mt_cn_nd4_joe = (2*b2m_adjusted_nd4_cn_joe) / copies_per_ul_B2M)
 
 #########################
 # Load Yogen's results
@@ -202,7 +210,10 @@ ws_22_2399 <- read_yogen_ws("22-2399")
 
 ws_22_2608 <- read_yogen_ws("22-2608")
 
+
 # Have to do individually because of non-standard name
+filepath <- "W:/MolecularGenetics/Neurogenetics/mtDNA/ddPCR/"
+
 ws_22_2113 <- read_excel(path = paste0(filepath, "22-2113/22-2113_yp.xlsm"),
                          sheet = "mtDNA % calc", skip = 1) %>%
   janitor::clean_names() %>%
@@ -219,36 +230,79 @@ yogen_results <- rbind(ws_22_1854, ws_22_2399, ws_22_2608, ws_22_2113) %>%
 
 result_comparison <- recent_data_calc %>%
   full_join(yogen_results, by = c("worksheet", "specimen_id")) %>%
-  mutate(nd1_cn_diff = abs(b2m_adjusted_nd1_cn - nd1_nuclear_adjusted),
-         nd4_cn_diff = abs(b2m_adjusted_nd4_cn - nd4_nuclear_adjusted),
-         nd1_copies_per_cell_diff = round(abs(mt_cn_nd1 - nd1_copies_per_cell), 0),
-         nd4_copies_per_cell_diff = round(abs(mt_cn_nd4 - nd4_copies_per_cell), 0))
+  mutate(nd1_adjusted_diff = abs(b2m_adjusted_nd1_cn - b2m_adjusted_nd1_cn_joe),
+         nd4_adjusted_diff = abs(b2m_adjusted_nd4_cn - b2m_adjusted_nd4_cn_joe),
+         nd1_cn_diff = round(abs(mt_cn_nd1 - mt_cn_nd1_joe), 0),
+         nd4_cn_diff = round(abs(mt_cn_nd4 - mt_cn_nd4_joe), 0)) %>%
+  select(worksheet, specimen_id, 
+         nd1_adjusted_diff, b2m_adjusted_nd1_cn, b2m_adjusted_nd1_cn_joe,
+         nd4_adjusted_diff, b2m_adjusted_nd4_cn, b2m_adjusted_nd4_cn_joe,
+         nd1_cn_diff, mt_cn_nd1, mt_cn_nd1_joe,
+         nd4_cn_diff, mt_cn_nd4, mt_cn_nd4_joe)
 
-# There is a discrepancy for 21RG-110G0081 ND1 calculations on 22-2113, because Yogen didn't use merged vallues
+# There is a discrepancy for 21RG-110G0081 ND1 calculations on 22-2113, because Yogen didn't use merged values
 # for this sample.
+
+# Check results graphically
+ggplot(result_comparison, aes(x = b2m_adjusted_nd1_cn, b2m_adjusted_nd1_cn_joe)) +
+  geom_point() +
+  labs(title = "Adjusted ND1 calculation comparison")
+
+ggplot(result_comparison, aes(x = b2m_adjusted_nd4_cn, b2m_adjusted_nd4_cn_joe)) +
+  geom_point()+
+  labs(title = "Adjusted ND4 calculation comparison")
+
+ggplot(result_comparison, aes(x = mt_cn_nd1, mt_cn_nd1_joe)) +
+  geom_point()+
+  labs(title = "Mitochondrial genomes per diploid nuclear genome - comparison - ND1")
+
+ggplot(result_comparison, aes(x = mt_cn_nd4, mt_cn_nd4_joe)) +
+  geom_point()+
+  labs(title = "Mitochondrial genomes per diploid nuclear genome - comparison - ND4")
 
 #########################
 # Generate plots
 #########################
 
-specimen <- "20RG-289G0083"
+# Generate plots of Yogen's results
 
-test_df <- recent_data_calc %>%
-  filter(specimen_id == specimen) %>%
-  select(worksheet, specimen_id, nd1_copies_per_cell, nd4_copies_per_cell) %>%
-  pivot_longer(cols = c(nd1_copies_per_cell, nd4_copies_per_cell),
-               names_to = "target_conc",
-               values_to = "concentration") %>%
-  mutate(target = substr(target_conc, 1, 3),
-         worksheet_target = paste0(worksheet, sep = "_", target))
+recent_samples <- unique(recent_data$specimen_id)
 
-y_upper <- max(test_df$concentration)
+make_cn_plot <- function(specimen) {
+  
+  test_df <- result_comparison %>%
+    filter(specimen_id == specimen) %>%
+    select(worksheet, specimen_id, mt_cn_nd1, mt_cn_nd4) %>%
+    pivot_longer(cols = c(mt_cn_nd1, mt_cn_nd4),
+                 names_to = "target_conc",
+                 values_to = "concentration") %>%
+    mutate(target = substr(target_conc, 7, 9),
+           worksheet_target = paste0(worksheet, sep = "_", target))
+  
+  y_upper <- max(test_df$concentration)
+  
+  mtdna_cn_plot <- ggplot(test_df, aes(x = worksheet_target, y = concentration, colour = target)) +
+    geom_point(size = 2) +
+    ylim(0, y_upper+100) +
+    labs(x = "", y = "Copies per diploid nuclear genome",
+         title = paste0(specimen, ": mtDNA copies per diploid nuclear genome (mt_cn value)"))
+  
+  ggsave(plot = mtdna_cn_plot, 
+         filename = paste0(specimen, "_mtdna_cn_plot_",
+                           format(Sys.time(), "%Y%m%d_%H%M%S"),
+                           ".tiff"),
+         path = "plots/mtdna_plots/cn_plots/", device='tiff', dpi=100,
+         units = "in",
+         width = 10,
+         height = 7)
+  
+}
 
-test_df %>%
-  ggplot(aes(x = worksheet_target, y = concentration, colour = target)) +
-  geom_point(size = 2) +
-  ylim(0, y_upper+100) +
-  labs(x = "", y = "Copies per diploid nuclear genome",
-       title = paste0(specimen, ": mtDNA copies per diploid nuclear genome"))
+
+for (specimen in recent_samples) {
+  
+  make_cn_plot(specimen)
+  
+}
 
 #########################
