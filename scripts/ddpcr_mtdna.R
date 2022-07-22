@@ -135,6 +135,20 @@ for (specimen in repeated_samples) {
 }
 
 #########################
+# Ammount of DNA input
+#########################
+
+mtdna_cleaned %>%
+  filter(target_clean == "B2M" & worksheet %in% c("22-1854", "22-2113", "22-2399", "22-2608") &
+           !is.na(specimen_id)) %>%
+  # Haploid nuclear human genome is 3.3pg
+  mutate(ng_input = (copies_per20u_l_well*3.3) / 1000) %>%
+  ggplot(aes(x = worksheet_well, y = ng_input)) +
+  geom_point() +
+  facet_wrap(~specimen_id) +
+  theme(axis.text.x = element_blank())
+  
+#########################
 # Sample dilution factors
 #########################
 
@@ -182,6 +196,7 @@ recent_data_calc <- recent_data_wider %>%
          # I've kept the names of these variables consistent with Yogen's spreadsheet
          b2m_adjusted_nd1_cn_joe = copies_per_ul_ND1 * dilution_factor,
          b2m_adjusted_nd4_cn_joe = copies_per_ul_ND4 * dilution_factor,
+         # Calculation from Wachsmuth et al PMID: 26978189
          mt_cn_nd1_joe = (2*b2m_adjusted_nd1_cn_joe) / copies_per_ul_B2M,
          mt_cn_nd4_joe = (2*b2m_adjusted_nd4_cn_joe) / copies_per_ul_B2M)
 
@@ -284,8 +299,8 @@ make_cn_plot <- function(specimen) {
   mtdna_cn_plot <- ggplot(test_df, aes(x = worksheet_target, y = concentration, colour = target)) +
     geom_point(size = 2) +
     ylim(0, y_upper+100) +
-    labs(x = "", y = "Copies per diploid nuclear genome",
-         title = paste0(specimen, ": mtDNA copies per diploid nuclear genome (mt_cn value)"))
+    labs(x = "Worksheet", y = "Mitochondrial genome copies per diploid nuclear genome",
+         title = paste0(specimen, ": Mitochondrial genome copies per diploid nuclear genome (mt_cn value)"))
   
   ggsave(plot = mtdna_cn_plot, 
          filename = paste0(specimen, "_mtdna_cn_plot_",
