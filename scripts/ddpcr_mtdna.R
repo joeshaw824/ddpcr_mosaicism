@@ -9,6 +9,7 @@
 
 library(tidyverse)
 library(readxl)
+library(lubridate)
 
 setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/ddpcr_mosaicism")
 
@@ -152,7 +153,7 @@ mtdna_cleaned %>%
 # Sample dilution factors
 #########################
 
-# 2 sample on 22-2399 (21RG-118G0011 and 21RG-162G0048) have a dilution factor of 250, not 500
+# 2 samples on 22-2399 (21RG-118G0011 and 21RG-162G0048) have a dilution factor of 250, not 500
 
 dilution_factors <- read.csv("resources/mtdna_dilution_factors.csv")
 
@@ -160,7 +161,36 @@ dilution_factors <- read.csv("resources/mtdna_dilution_factors.csv")
 # Patient ages
 #########################
 
-# Most reliable way may be to go from referral forms
+# To add
+
+# Best option is to get the information from Winpath as they all have "J" numbers
+
+patient_ages <- read_excel(path = "I:/Regional Genetics Service/Validation Documents/Disease-specific validation/Miscellaneous/Mitochondrial depletion via ddPCR/Run Data & Worksheets/FINAL_ALL_COMB_DATA_model.xlsx",
+                           sheet = "allCOMB_data_YP") %>%
+  janitor::clean_names()
+
+non_date_values <- c(".", NA, "41771", "218ng/ul", "205ng/ul", "192ng/ul", "626 days", "13 days", "3364 days")
+
+unique(patient_ages$biop)
+"3/02/17"
+
+patient_ages_clean <- patient_ages %>%
+  filter(!bd %in% non_date_values & !biop %in% non_date_values) %>%
+  mutate(clean_biopsy_date  = case_when(
+    biop == "3/02/17" ~"03/02/2017",
+    biop == "13/02/12" ~"13/02/2012",
+    biop == "17/07/19" ~"17/07/2019",
+    TRUE ~biop)) %>%
+  dplyr::rename(birth_date = bd) %>%
+  mutate(birth_date2 = as.Date(birth_date, format = "%d/%m/%Y"),
+         biopsy_date2 = as.Date(clean_biopsy_date, format = "%d/%m/%Y"),
+         age_days = biopsy_date2 - birth_date2) %>%
+  select(specimin_id, birth_date2, biopsy_date2, age_days)
+
+patient_age_comparison <- patient_ages_clean %>%
+  left_join(patient_ages %>%
+              select(specimin_id, days),
+            by = "specimin_id")
 
 #########################
 # Definitions
@@ -312,7 +342,6 @@ make_cn_plot <- function(specimen) {
          height = 7)
   
 }
-
 
 for (specimen in recent_samples) {
   

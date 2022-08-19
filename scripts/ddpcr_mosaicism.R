@@ -8,17 +8,66 @@ setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/
 # Load data
 source("scripts/load_ddpcr_data.R")
 
+# 19/08/2022 The idea is to move away from maintaining resource csv files (they are too time-consuming
+# and error-prone) and keep the majority of filtering steps visible in this script.
+
+## TO DO: go through data and identify failed assays, patients used as normal controls etc
+# Probably best to do in one go when I have lots of time.
+# Plot jitter plots
+
 #########################
 # Get resources
 #########################
 
-mosaicism_targets <- read_excel("resources/mosaic_targets_v2.xlsx")
-# Add check to make sure assay_id is unique
+mosaicism_targets <- read_excel("resources/mosaic_targets_v2.xlsx",
+                                     trim_ws = TRUE)
 
-#mosaicism_assays <- mosaicism_targets %>%
-  #pivot_wider(id_cols = assay,
-              #names_from = target_category,
-              #values_from = c(target, fluorophore))
+# Check for duplicate assay ids
+if(anyDuplicated(mosaicism_targets$assay_id) > 0){
+  print("Error: There are duplicate assay IDs in the target file")
+  # Remove file so script breaks easily
+  rm(mosaicism_targets)
+}
+
+controls <- read_csv("resources/ddpcr_mosaic_controls.csv")
+
+control_ids <- c(controls$specimen_id, controls$control_code)
+
+mosaic_worksheets <- read_csv("resources/mosaic_ddpcr_worksheets.csv")
+
+single_temp_worksheets <- mosaic_worksheets %>%
+  filter(category == "single_temp")
+
+gradient_temp_worksheets <- mosaic_worksheets %>%
+  filter(category == "gradient_temp")
+
+failed_assays <- c("ANT2RMD", "ANPR3GH", "ANXG9C4", "ANPR4AR", "ANT2RFN")
+
+assay_information <- read_excel(
+  path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
+  sheet = "sequences") %>%
+  janitor::clean_names()
+
+# Use Tom's spreadsheet to avoid duplication of effort
+ngs_results <- read_excel(path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
+                          sheet = "ddPCR_confirmation_list") %>%
+  janitor::clean_names() %>%
+  mutate(mosaic_miner_vaf = as.numeric(mosaic_miner_vaf),
+         rc_vaf = as.numeric(rc_vaf),
+         
+         ngs = ifelse(is.na(mosaic_miner_vaf), rc_vaf,
+                      mosaic_miner_vaf),
+         ngs_percent = ngs*100,
+         mosaic_miner_percent = mosaic_miner_vaf*100)
+
+if(anyDuplicated(ngs_results$sample) > 0){
+  print("Error: There are duplicate samples in the NGS results")
+  rm(ngs_results)
+}
+
+#########################
+# old resources
+#########################
 
 analysis_wells <- read_csv(
   "resources/mosaicism_analysis_wells.csv") %>%
@@ -27,15 +76,11 @@ analysis_wells <- read_csv(
          identity = factor(identity, levels = c("NTC",
                                                 "normal",
                                                 "patient")))
+
 wells_for_ngs_comparison <- read_csv(
   "resources/ddpcr_wells_ngs_comparison.csv") %>%
   mutate(worksheet_well_sample = paste(worksheet, well, sample, 
                                 sep = "_"))
-
-assay_information <- read_excel(
-  path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
-  sheet = "sequences") %>%
-  janitor::clean_names()
 
 #########################
 # Restructure target file
@@ -109,6 +154,33 @@ new_data <- ddpcr_data %>%
 data_with_targets <- rbind(previous_data, new_data)
 
 #########################
+# Samples not reported 
+#########################
+
+not_reported <- c(# matched blood from a skin sample (21RG-326G0125) with a confirmed PIK3CA variant.
+                  "22-1678_B03_21RG-343G0152", "22-1678_C03_21RG-343G0152",
+                  
+                  # GNAS c.602GA - not confirmed on ddPCR or NIPD panel
+                  "22-2490_B03_22RG-097G0042", "22-2490_A03_22RG-097G0042", 
+                  
+                  # Paired blood sample for 22RG-097G0042 - not confirmed on NIPD
+                  "22-2490_C03_19RG-178G0080", "22-2490_D03_19RG-178G0080", 
+                  
+                  # Blood and skin for same patient - 22RG-004G0015 
+                  # had a confirmed NF1 SNV at 1%
+                  "22-0271_H04_22RG-004G0015", "22-0271_G04_22RG-004G0015",
+                  "22-0271_B05_20RG-209G0042", "22-0271_A05_20RG-209G0042",
+                  
+                  # BRAF variant not detected
+                  "22-2630_A03_21RG-138G0065", "22-2630_B03_21RG-138G0065",
+                  
+                  # GNAS c601 not detected
+                  "21-4459_F03_20RG-209G0042", "21-4459_E03_20RG-209G0042",
+                  
+                  # GNAS c602 not confirmed
+                  "22-2630_A07_22RG-097G0042", "22-2630_B07_22RG-097G0042")
+
+#########################
 # Modify ddPCR mosaic data 
 #########################
 
@@ -137,7 +209,32 @@ mosaic_ddpcr_db <- mosaic_data_mod %>%
               # convention
               names_glue = "{target_category}_{.value}") %>%
   mutate(assay_gene = sub("_.*", "", assay_name),
-         assay_gene = sub("c.*", "", assay_gene))
+         assay_gene = sub("c.*", "", assay_gene),
+         
+         # Add identity
+         identity = case_when(
+           sample == "NTC" ~"NTC",
+           sample %in% control_ids ~"normal",
+           
+           # Some patient samples used as controls for other assays
+           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031") & worksheet == "21-3894" ~"normal",
+           
+           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031", "20RG-153G0082") & worksheet == "21-4270"  ~"normal",
+           
+           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031", "20RG-153G0082") & worksheet == "21-4327"  ~"normal",
+           
+           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031", "20RG-153G0082") & worksheet == "21-4391"  ~"normal",
+           
+           sample == "20RG-209G0042" & worksheet == "21-2298"  ~"normal",
+           
+           sample == "20RG-260G0066" & worksheet == "21-0374" ~"normal",
+           
+           TRUE ~"patient"),
+         
+         # Add factor levels for plots
+         identity = factor(identity, levels = c("NTC",
+                                                "normal",
+                                                "patient")))
 
 write.csv(mosaic_ddpcr_db,
           file = paste0("database/mosaic_ddpcr_db_", 
@@ -148,27 +245,19 @@ write.csv(mosaic_ddpcr_db,
 # NGS vs ddPCR 
 #########################
 
-# Change so that this step does not rely on the manually-curated csv. Exclude all the
-# wells from samples with merged wells.
-
-ngs_results <- read_csv("ddpcr_mosaicism/resources/ngs_results.csv") %>%
-  janitor::clean_names() %>%
-  mutate(ngs = ifelse(is.na(mosaic_miner_vaf), rc_vaf,
-                              mosaic_miner_vaf),
-         ngs_percent = ngs*100,
-         mosaic_miner_percent = mosaic_miner_vaf*100) %>%
-  select(sample, mosaic_miner_vaf, rc_vaf, ngs_percent,
-         mosaic_miner_percent)
+# Use sample_worksheet as a filter
 
 ngs_vs_ddpcr <- mosaic_ddpcr_db %>%
-  # When a sample has more than 1 ddPCR replicate, the merged well value is 
-  # used. Some samples only had enough for 1 ddPCR well, so merged values 
-  # were not calculated in Quantasoft.
-  filter(worksheet_well_sample %in% 
-           wells_for_ngs_comparison$worksheet_well_sample) %>%
-  left_join(ngs_results %>%
-              select(sample, ngs_percent, mosaic_miner_percent),
-            by = "sample")
+  # Add section to catch samples which only had 1 well on a single_temp worksheet
+  filter((worksheet %in% single_temp_worksheets$worksheet & substr(well, 1, 1) == "M") |
+           (worksheet %in% gradient_temp_worksheets$worksheet & substr(well, 1, 1) == "E")) %>%
+  inner_join(ngs_results,
+              by = "sample") %>%
+  mutate(variant_check = ifelse(assay_name == variant_assay, TRUE, FALSE))
+
+# Check data is for the same variant
+ngs_vs_ddpcr %>%
+  filter(variant_check == FALSE)
 
 sample_number <- nrow(ngs_vs_ddpcr)
 
@@ -202,22 +291,28 @@ ggsave(plot = ddpcr_ngs_plot,
 # Selecting analysis wells
 #########################
 
-# Analysis wells: any well where an assay was under optimal/standard conditions.
+# Analysis wells: any well where an assay was under standard conditions of 59 degrees annealing temperature.
 # All wells on a single temp worksheet are included. For optimisation worksheets,
-# only wells as the optimum annealing temperature are included.
+# only wells at 59 degrees (row E) are included.
 
 mosaic_analysis_data <- mosaic_ddpcr_db %>%
-  filter(worksheet_well_sample %in% 
-           analysis_wells$worksheet_well_sample) %>%
-  left_join(analysis_wells %>%
-              select(worksheet_well_sample, identity),
-            by = "worksheet_well_sample") 
+  filter((worksheet %in% single_temp_worksheets$worksheet & substr(well, 1, 1) != "M" | 
+         (worksheet %in% gradient_temp_worksheets$worksheet & substr(well, 1, 1) == "E"))
+         & !assay_id %in% failed_assays)
 
 #########################
 # Variant concentrations
 #########################
 
+mosaic_analysis_data %>%
+  filter(identity == "patient") %>%
+  filter(!worksheet_well_sample %in% not_reported) %>%
+  arrange(variant_copies_per_ul) %>%
+  select(worksheet_well_sample, variant_copies_per_ul)
+
+
 variant_conc_plot <- mosaic_analysis_data %>%
+  filter(!worksheet_well_sample %in% not_reported) %>%
   arrange(identity, variant_copies_per_ul) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
                                         levels = c(worksheet_well_sample))) %>%
@@ -227,8 +322,8 @@ variant_conc_plot <- mosaic_analysis_data %>%
   geom_point(pch = 21, aes(fill = identity),
              colour = "black",
              size = 2) +
-  geom_errorbar(aes(ymin = variant_poisson_conc_min, 
-                    ymax = variant_poisson_conc_max)) +
+  #geom_errorbar(aes(ymin = variant_poisson_conc_min, 
+                    #ymax = variant_poisson_conc_max)) +
   theme_bw() +
   theme(axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
@@ -240,8 +335,8 @@ variant_conc_plot <- mosaic_analysis_data %>%
        title = "Variant concentation in ddPCR mosaic data") +
   scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
                      limits = c(0, 100),
-                     breaks = c(0, 0.4, 1, 10, 100)) +
-  geom_hline(yintercept = 0.4, linetype = "dashed") +
+                     breaks = c(0, 1, 10, 100)) +
+  # geom_hline(yintercept = 0.4, linetype = "dashed") +
   geom_hline(yintercept = 1, linetype = "dashed") +
   annotate(geom = "text", x = 100, y = 1.5,
          label = "Variants detected above 1 copy per ul were reported")
@@ -271,8 +366,8 @@ variant_fraction_plot <- mosaic_analysis_data %>%
   geom_point(pch = 21, aes(fill = identity),
              colour = "black",
              size = 2) +
-  geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min, 
-                    ymax = variant_poisson_fractional_abundance_max)) +
+  #geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min, 
+                    #ymax = variant_poisson_fractional_abundance_max)) +
   theme_bw() +
   theme(axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
@@ -284,8 +379,8 @@ variant_fraction_plot <- mosaic_analysis_data %>%
        title = "Variant percentages under 5% in ddPCR mosaic data") +
   scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
                      limits = c(0, 5),
-                     breaks = c(0, 0.1, 0.3, 1, 5)) +
-  geom_hline(yintercept = 0.1, linetype = "dashed") +
+                     breaks = c(0, 0.3, 1, 5)) +
+  #geom_hline(yintercept = 0.1, linetype = "dashed") +
   geom_hline(yintercept = 0.3, linetype = "dashed") +
   annotate(geom = "text", x = 80, y = 0.5,
            label = "Variants detected above 0.3% were reported")
@@ -451,8 +546,6 @@ single_assay_plot <- mosaic_analysis_data %>%
                      limits = c(0, 10000),
                      breaks = c(0, 10, 100, 1000, 10000))
 
-
-
 #########################
 # FAM+VIC- droplets 
 #########################
@@ -498,32 +591,13 @@ check_this <- mosaic_analysis_data %>%
   arrange(variant_copies_per_20ul_well) %>%
   select(worksheet_well_sample, assay_name, variant_copies_per_20ul_well)
 
-# "22-0227_H07_21RG-278G0061" - NF1 insertion - potential failed assay
 
-# "22-1678_B03_21RG-343G0152" and "22-1678_C03_21RG-343G0152" - matched blood from a skin 
-
-# sample (21RG-326G0125) with a confirmed PIK3CA variant.
-
-# "22-2490_B03_22RG-097G0042" and "22-2490_A03_22RG-097G0042" - GNAS c.602GA - not confirmed on ddPCR or NIPD panel
-
-# "22-2490_C03_19RG-178G0080" and "22-2490_D03_19RG-178G0080" - paired blood sample for 22RG-097G0042 - not confirmed on NIPD
-
-# "22-0271_H04_22RG-004G0015" and "22-0271_G04_22RG-004G0015" and "22-0271_B05_20RG-209G0042" and
-# "22-0271_A05_20RG-209G0042" - blood and skin for same patient - 22RG-004G0015 
-# had a confirmed NF1 SNV at 1%
-
-not_reported <- c("22-0227_H07_21RG-278G0061", "22-1678_B03_21RG-343G0152", "22-1678_C03_21RG-343G0152",
-                  "22-2490_B03_22RG-097G0042", "22-2490_A03_22RG-097G0042", "22-2490_C03_19RG-178G0080",
-                  "22-2490_D03_19RG-178G0080", "22-0271_H04_22RG-004G0015", "22-0271_G04_22RG-004G0015",
-                  "22-0271_B05_20RG-209G0042", "22-0271_A05_20RG-209G0042")
 
 reported_patient_data <- mosaic_analysis_data %>%
   arrange(identity, variant_copies_per_20ul_well) %>%
   filter(!worksheet_well_sample %in% not_reported ) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
                                         levels = c(worksheet_well_sample)))
-
-length(unique(reported_patient_data$assay_id))
 
 reported_patients <- reported_patient_data %>%
   filter(identity == "patient")
@@ -589,8 +663,6 @@ mosaic_analysis_data %>%
   group_by(identity) %>%
   summarise(count = n())
 
-
-
 mosaicism_targets %>%
   mutate(assay_gene = sub("_.*", "", channel1_target),
          assay_gene = sub("c.*", "", assay_gene)) %>%
@@ -598,31 +670,9 @@ mosaicism_targets %>%
   summarise(total = n()) %>%
   arrange(desc(total))
 
-patients_per_assay <- mosaic_analysis_data %>%
-  filter(!base::duplicated(sample)) %>%
-  group_by(assay_id) %>%
-  summarise(patients_per_assay = n()) %>%
-  arrange(desc(patients_per_assay)) %>%
-  left_join(mosaicism_targets %>%
-              select(assay_id, assay_name),
-            by = "assay_id") %>%
-  select(assay_id, assay_name, patients_per_assay)
-
-nrow(patients_per_assay %>%
-       filter(patients_per_assay == 1))
-
-
-normals_only <- mosaic_analysis_data %>%
-  filter(identity =="normal")
-
-max(normals_only$variant_fractional_abundance, na.rm = TRUE)
-
-colnames(normals_only)
-
-ggplot(normals_only, aes(x = identity, y = variant_copies_per_20ul_well)) +
-  geom_jitter() 
-
-
+#########################
+# Patients per assay 
+#########################
 
 patients_per_assay <- mosaic_analysis_data %>%
   filter(identity == "patient") %>%
@@ -633,13 +683,4 @@ patients_per_assay <- mosaic_analysis_data %>%
 write.csv(patients_per_assay, "ddpcr_mosaicism/database/patients_per_assay.csv",
           row.names = FALSE)
 
-mosaic_analysis_data %>%
-  filter(assay_name == "GNAQ_c.548GA") %>%
-  ggplot(aes(x = reference_threshold, y = variant_threshold)) +
-  geom_point()
-
-
-# Row E is 59 degrees
-# How many assays wouldn't work at 59 degrees? I.e. if we just ran at 59 to start with?
-# I.e. didn't do optimisation worksheets?
-
+#########################
