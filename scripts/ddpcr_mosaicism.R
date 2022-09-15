@@ -29,14 +29,26 @@ if(anyDuplicated(mosaicism_targets$assay_id) > 0){
   rm(mosaicism_targets)
 }
 
+# Add check here to make sure all the assays that have been ordered are in the targets file
+# But don't have the script break if not.
+tom_spreadsheet <- read_excel("I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
+                              sheet = "sequences") %>%
+  janitor::clean_names()
+
+setdiff(tom_spreadsheet$assay_id, mosaicism_targets$assay_id)
+
+# ANWDA9U is the alternative version of GNAS c.601C>T which was ordered in error.
+
 # Anonymised control gDNAs (samples referred for cystic fibrosis screening which were negative)
 control_ids <- c("21RG-333G0100",	"C257", "21RG-333G0101",	"C258", "21RG-333G0107",	"C261", 
                  "21RG-333G0112",	"C264", "22RG-110G0026",	"C270", "22RG-110G0030",	"C272")
 
-single_temp_worksheets <- c("21-4327", "21-4459", "22-0271", "22-1066","22-1678", "22-2490", "22-2630")
+single_temp_worksheets <- c("21-4327", "21-4459", "22-0271", "22-1066","22-1678", "22-2490", "22-2630",
+                            "22-2987")
 
 gradient_temp_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", "21-4391", "21-4435", 
-                              "22-0227", "22-0873", "22-1395", "22-1880", "22-2099", "22-2397", "22-2889")
+                              "22-0227", "22-0873", "22-1395", "22-1880", "22-2099", "22-2397", "22-2889",
+                              "22-3294")
 
 # Check for worksheets on both lists
 if(length(base::intersect(single_temp_worksheets, gradient_temp_worksheets)) > 0) {
@@ -66,7 +78,11 @@ failed_assays <- c(# RHOA_c.514GA
                     # PIK3CA_c.1034AT
                     "ANPR4AR", 
                     # NF1_c7863ins
-                    "ANT2RFN")
+                    "ANT2RFN",
+                    # MAP2K1_c.168GT
+                    "ANRWXVN",
+                    # NF1 indel design by Thermo team
+                    "NF1_c.7863_7864ins")
 
 assay_information <- read_excel(
   path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
@@ -105,15 +121,22 @@ not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125) with a con
   # had a confirmed NF1 SNV at 1%
   "22-0271_H04_22RG-004G0015", "22-0271_G04_22RG-004G0015",
   "22-0271_B05_20RG-209G0042", "22-0271_A05_20RG-209G0042",
+  "21-4459_F03_20RG-209G0042", "21-4459_E03_20RG-209G0042",
   
   # BRAF variant not detected
   "22-2630_A03_21RG-138G0065", "22-2630_B03_21RG-138G0065",
   
-  # GNAS c601 not detected
-  "21-4459_F03_20RG-209G0042", "21-4459_E03_20RG-209G0042",
-  
   # GNAS c602 not confirmed
   "22-2630_A07_22RG-097G0042", "22-2630_B07_22RG-097G0042")
+
+#########################
+# Patient demographics
+#########################
+
+patient_info <- read_excel("resources/Mosaic_sequencing_referrals_20220915_0805.xlsx") %>%
+  janitor::clean_names() %>%
+  dplyr::rename(specimen_id = test_specimen_id) %>%
+  filter(!base::duplicated(specimen_id))
 
 #########################
 # Restructure target file
@@ -548,12 +571,32 @@ length(unique(mosaic_analysis_data$assay_gene))
 # Worksheets
 length(unique(mosaic_analysis_data$worksheet))
 
+# Patients tested
+patients_only <- mosaic_analysis_data %>%
+  filter(identity == "patient")
+
+length(unique(patients_only$sample))
+
 mosaicism_targets %>%
   mutate(assay_gene = sub("_.*", "", channel1_target),
          assay_gene = sub("c.*", "", assay_gene)) %>%
   group_by(assay_gene) %>%
   summarise(total = n()) %>%
   arrange(desc(total))
+
+patients_with_data <- patient_info %>%
+  left_join(mosaic_analysis_data %>%
+              filter(!base::duplicated(sample)) %>%
+              select(sample, assay_name, variant_fractional_abundance) %>%
+              dplyr::rename(specimen_id = sample),
+            by = "specimen_id") %>%
+  filter(!is.na(assay_name)) %>%
+  mutate(age_years = as.numeric(gsub("-year old", "", age)))
+
+# Children under 10 tested
+patients_with_data %>%
+  filter(age_years <+10) %>%
+  select(specimen_id, age_years)
 
 #########################
 # Patients per assay 
