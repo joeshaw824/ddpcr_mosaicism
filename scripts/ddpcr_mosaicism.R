@@ -29,7 +29,7 @@ if(anyDuplicated(mosaicism_targets$assay_id) > 0){
   rm(mosaicism_targets)
 }
 
-# Add check here to make sure all the assays that have been ordered are in the targets file
+# Check all the assays that have been ordered are in the targets file
 # But don't have the script break if not.
 tom_spreadsheet <- read_excel("I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
                               sheet = "sequences") %>%
