@@ -3,17 +3,51 @@
 ## Joseph.Shaw@gosh.nhs.uk / joseph.shaw3@nhs.net
 ################################################################################
 
+# 19/08/2022 The idea is to move away from maintaining resource csv files 
+# (they are too time-consuming and error-prone) and keep the majority of
+# filtering steps visible in this script.
+
+# 22/08/2022 Variant fractional abundance is a relative measure, and 
+# therefore not so useful when looking at the dataset as a whole. 
+# The better option is values which account for the different number of 
+# partitions (droplets) between wells: variant concentration 
+# and variant total molecules.
+
+library(tidyverse)
+library(readxl)
+
+#########################
+# Read in ddPCR data 
+#########################
+
 setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/ddpcr_mosaicism/")
 
-# Load data
-source("scripts/load_ddpcr_data.R")
+data_filepath <- "//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/ddpcr_mosaicism/data/"
 
-# 19/08/2022 The idea is to move away from maintaining resource csv files (they are too time-consuming
-# and error-prone) and keep the majority of filtering steps visible in this script.
+ddpcr_files <- list.files(path = data_filepath)
 
-# 22/08/2022 Variant fractional abundance is a relative measure, and therefore not so useful when 
-# looking at the dataset as a whole. The better option is values which account for the different 
-# number of partitions (droplets) between wells: variant concentration and variant total molecules.
+#Empty data frame
+ddpcr_data <- data.frame()
+
+# Read and collate each worksheet csv
+for (dataFile in ddpcr_files){
+  tmp_dat <- readr::read_csv(paste0(data_filepath,dataFile), col_names = TRUE,
+                             show_col_types = FALSE) %>%
+    janitor::clean_names() %>%
+    # Each data file is the worksheet number. Remove ".csv" from filename
+    mutate(worksheet = substr(as.character(dataFile), 1, 7),
+           # Add a unique identifier for each well.
+           worksheet_well_sample = paste(worksheet, well, sample, 
+                                         sep = "_"))
+  ddpcr_data <-rbind(ddpcr_data, tmp_dat)
+  rm(tmp_dat)
+}
+
+ddpcr_data <- ddpcr_data %>%
+  # Change concentration from type chr to type numeric. Rename to be explicit.
+  mutate(copies_per_ul = as.numeric(ifelse(concentration == "No Call", 
+                                           NA, concentration))) %>%
+  select(-concentration)
 
 #########################
 # Get resources
@@ -31,27 +65,42 @@ if(anyDuplicated(mosaicism_targets$assay_id) > 0){
 
 # Check all the assays that have been ordered are in the targets file
 # But don't have the script break if not.
+
 tom_spreadsheet <- read_excel("I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
                               sheet = "sequences") %>%
   janitor::clean_names()
 
+# ANWDA9U is the alternative version of GNAS c.601C>T which was ordered 
+# in error.
 setdiff(tom_spreadsheet$assay_id, mosaicism_targets$assay_id)
 
-# ANWDA9U is the alternative version of GNAS c.601C>T which was ordered in error.
+# Anonymised control gDNAs (samples referred for cystic fibrosis 
+# screening which were negative)
 
-# Anonymised control gDNAs (samples referred for cystic fibrosis screening which were negative)
-control_ids <- c("21RG-333G0100",	"C257", "21RG-333G0101",	"C258", "21RG-333G0107",	"C261", 
-                 "21RG-333G0112",	"C264", "22RG-110G0026",	"C270", "22RG-110G0030",	"C272")
+control_ids <- c("21RG-333G0100",	"C257", "21RG-333G0101",	"C258", 
+                 "21RG-333G0107",	"C261", "21RG-333G0112",	"C264", 
+                 "22RG-110G0026",	"C270", "22RG-110G0030",	"C272",
+                 "C279", "C278", "C274", "C277", "C280")
 
-single_temp_worksheets <- c("21-4327", "21-4459", "22-0271", "22-1066","22-1678", "22-2490", "22-2630",
-                            "22-2987")
+# Check for duplicated controls
+if(anyDuplicated(control_ids) > 0){
+  print("Error: There are duplicate control IDs")
+  # Remove file so script breaks easily
+  rm(control_ids)
+}
 
-gradient_temp_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", "21-4391", "21-4435", 
-                              "22-0227", "22-0873", "22-1395", "22-1880", "22-2099", "22-2397", "22-2889",
-                              "22-3294")
+single_temp_worksheets <- c("21-4327", "21-4459", "22-0271", "22-1066",
+                            "22-1678", "22-2490", "22-2630", "22-2987", 
+                            "22-3704")
+
+gradient_temp_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", 
+                              "21-4391", "21-4435", "22-0227", "22-0873", 
+                              "22-1395", "22-1880", "22-2099", "22-2397", 
+                              "22-2889", "22-3294", "22-3566")
 
 # Check for worksheets on both lists
-if(length(base::intersect(single_temp_worksheets, gradient_temp_worksheets)) > 0) {
+if(length(base::intersect(single_temp_worksheets, 
+                          gradient_temp_worksheets)) > 0) {
   print("There are worksheets listed as both single_temp and gradient_temp")
   rm(single_temp_worksheets)
   rm(gradient_temp_worksheets)
@@ -84,6 +133,9 @@ failed_assays <- c(# RHOA_c.514GA
                     # NF1 indel design by Thermo team
                     "NF1_c.7863_7864ins")
 
+# Sample at high concentration - ddPCR well saturated
+failed_wells <- c("22-3704_A03_22RG-168G0199", "22-3704_B03_22RG-168G0199")
+
 assay_information <- read_excel(
   path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
   sheet = "sequences") %>%
@@ -108,7 +160,8 @@ if(anyDuplicated(ngs_results$sample) > 0){
 
 # Samples not reported as having mosaicism confirmed
 
-not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125) with a confirmed PIK3CA variant.
+not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125) 
+  # with a confirmed PIK3CA variant.
   "22-1678_B03_21RG-343G0152", "22-1678_C03_21RG-343G0152",
   
   # GNAS c.602GA - not confirmed on ddPCR or NIPD panel
@@ -127,7 +180,13 @@ not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125) with a con
   "22-2630_A03_21RG-138G0065", "22-2630_B03_21RG-138G0065",
   
   # GNAS c602 not confirmed
-  "22-2630_A07_22RG-097G0042", "22-2630_B07_22RG-097G0042")
+  "22-2630_A07_22RG-097G0042", "22-2630_B07_22RG-097G0042",
+  
+  # Blood sample, paired with skin sample 22RG-060G0140
+  "22-3704_A05_22RG-249G0173", "22-3704_B05_22RG-249G0173",
+  
+  # GNAS variant not confirmed
+  "22-2987_A11_22RG-164G0110", "22-2987_B11_22RG-164G0110")
 
 #########################
 # Patient demographics
@@ -142,8 +201,7 @@ patient_info <- read_excel("resources/Mosaic_sequencing_referrals_20220915_0805.
 # Restructure target file
 #########################
 
-# There is probably a cleaner way to do this with pivot_wider but I 
-# couldn't work it out.
+# There is probably a cleaner way to do this with pivot_wider.
 
 targets_ch1 <- mosaicism_targets %>%
   select(assay_id, assay_name, channel1_target,
@@ -169,8 +227,8 @@ targets_rearranged <- rbind(targets_ch1, targets_ch2)
 # Targets with assay ids
 #########################
 
-# Probably the best way to join up the old worksheets is with a csv which states the 
-# worksheet, assay_id and assay_name.
+# Probably the best way to join up the old worksheets is with a csv 
+# which states the worksheet, assay_id and assay_name.
 # Not that neat but it will get all the data in the same format.
 
 ws_assay_ids <- read_csv("resources/worksheet_assay_ids.csv") %>%
@@ -182,10 +240,13 @@ ws_assay_ids <- read_csv("resources/worksheet_assay_ids.csv") %>%
 # Add targets to previous data 
 #########################
 
-# These worksheets were run without the "assay id" value in the "experiment" column of the Quantasoft input.
+# These worksheets were run without the "assay id" value in the 
+# "experiment" column of the Quantasoft input.
 
-previous_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", "21-4327", "21-4391", "21-4435", 
-                    "21-4459", "22-0227", "22-0271", "22-0873", "22-1066", "22-1395")
+previous_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", 
+                         "21-4327", "21-4391", "21-4435", "21-4459", 
+                         "22-0227", "22-0271", "22-0873", "22-1066", 
+                         "22-1395")
 
 previous_data <- ddpcr_data %>%
   filter(worksheet %in% previous_worksheets) %>%
@@ -216,9 +277,10 @@ data_with_targets <- rbind(previous_data, new_data)
 mosaic_data_mod <- data_with_targets %>%
   dplyr::rename(total_droplets = accepted_droplets,
                 # "total_conf_max/min" refer to the "concentration" field.
-                # "total_conc_max" is the maximum value of the concentration with total error.
-                # I renamed these fields to be consistent with the naming convention in
-                # other columns.
+                # "total_conc_max" is the maximum value of the concentration 
+                # with total error.
+                # I renamed these fields to be consistent with the naming 
+                # convention in other columns.
                 total_conc_max = total_conf_max,
                 total_conc_min = total_conf_min,
                 poisson_conc_max = poisson_conf_max,
@@ -247,13 +309,20 @@ mosaic_ddpcr_db <- mosaic_data_mod %>%
            sample %in% control_ids ~"normal",
            
            # Some patient samples used as controls for other assays
-           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031") & worksheet == "21-3894" ~"normal",
+           sample %in% c("20RG-209G0042", "21RG-074G0164", 
+                         "20RG-337G0031") & worksheet == "21-3894" ~"normal",
            
-           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031", "20RG-153G0082") & worksheet == "21-4270"  ~"normal",
+           sample %in% c("20RG-209G0042", "21RG-074G0164", 
+                         "20RG-337G0031", "20RG-153G0082") 
+                          & worksheet == "21-4270"  ~"normal",
            
-           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031", "20RG-153G0082") & worksheet == "21-4327"  ~"normal",
+           sample %in% c("20RG-209G0042", "21RG-074G0164", 
+                         "20RG-337G0031", "20RG-153G0082") 
+                          & worksheet == "21-4327"  ~"normal",
            
-           sample %in% c("20RG-209G0042", "21RG-074G0164", "20RG-337G0031", "20RG-153G0082") & worksheet == "21-4391"  ~"normal",
+           sample %in% c("20RG-209G0042", "21RG-074G0164", 
+                         "20RG-337G0031", "20RG-153G0082") 
+                          & worksheet == "21-4391"  ~"normal",
            
            sample == "20RG-209G0042" & worksheet == "21-2298"  ~"normal",
            
@@ -265,12 +334,15 @@ mosaic_ddpcr_db <- mosaic_data_mod %>%
          identity = factor(identity, levels = c("NTC", "normal", "patient")),
          
          status = case_when(
-           identity == "NTC" ~"NTC",
-           identity == "normal" ~"normal",
-           identity == "patient" & !worksheet_well_sample %in% not_confirmed ~"patient - mosaicism confirmed",
-           identity == "patient" & worksheet_well_sample %in% not_confirmed ~"patient - not confirmed"),
+         identity == "NTC" ~"NTC",
+         identity == "normal" ~"normal",
+         identity == "patient" & 
+           !worksheet_well_sample %in% not_confirmed ~"patient - mosaicism confirmed",
+         identity == "patient" &
+           worksheet_well_sample %in% not_confirmed ~"patient - not confirmed"),
          
-         status = factor(status, levels = c("NTC", "normal", "patient - not confirmed",
+         status = factor(status, levels = c("NTC", "normal", 
+                                            "patient - not confirmed",
                                             "patient - mosaicism confirmed"))) %>%
   filter(sample != "G_block") %>%
   filter(!assay_id %in% failed_assays)
@@ -290,15 +362,66 @@ write.csv(mosaic_ddpcr_db,
 # Selecting analysis wells
 #########################
 
-# Analysis wells: any well where an assay was under standard conditions of 59 degrees annealing temperature.
-# All wells on a single temp worksheet are included. For optimisation worksheets,
-# only wells at 59 degrees (row E) are included.
+# Analysis wells: any well where an assay was under standard conditions 
+# of 59 degrees annealing temperature.
+# All wells on a single temp worksheet are included. 
+# For optimisation worksheets, only wells at 59 degrees (row E) are included.
 
 mosaic_analysis_data <- mosaic_ddpcr_db %>%
   filter(
-    (worksheet %in% single_temp_worksheets & substr(well, 1, 1) != "M") | 
-      (worksheet %in% gradient_temp_worksheets & worksheet != "21-4391" & substr(well, 1, 1) == "E") |
+    ((worksheet %in% single_temp_worksheets & substr(well, 1, 1) != "M") | 
+      (worksheet %in% gradient_temp_worksheets & worksheet != "21-4391" 
+       & substr(well, 1, 1) == "E") |
+      # 21-4391 was placed upside down on the thermocycler
       (worksheet == "21-4391" & substr(well, 1, 1) == "D"))
+    & !worksheet_well_sample %in% failed_wells)
+
+#########################
+# Service numbers 
+#########################
+
+# Wells
+mosaic_analysis_data %>%
+  group_by(status) %>%
+  summarise(total = n())
+
+# Number of assays tested
+length(unique(mosaic_analysis_data$assay_id))
+
+# Number of genes
+length(unique(mosaic_analysis_data$assay_gene))
+
+# Worksheets
+length(unique(mosaic_analysis_data$worksheet))
+
+# Patients tested
+patients_only <- mosaic_analysis_data %>%
+  filter(identity == "patient")
+
+length(unique(patients_only$sample))
+
+# How many TaqMan assays are there for each gene?
+mosaicism_targets %>%
+  mutate(assay_gene = sub("_.*", "", channel1_target),
+         assay_gene = sub("c.*", "", assay_gene)) %>%
+  group_by(assay_gene) %>%
+  summarise(total = n()) %>%
+  arrange(desc(total))
+
+# This step needs updating
+patients_with_data <- patient_info %>%
+  left_join(mosaic_analysis_data %>%
+              filter(!base::duplicated(sample)) %>%
+              select(sample, assay_name, variant_fractional_abundance) %>%
+              dplyr::rename(specimen_id = sample),
+            by = "specimen_id") %>%
+  filter(!is.na(assay_name)) %>%
+  mutate(age_years = as.numeric(gsub("-year old", "", age)))
+
+# Children under 10 tested
+patients_with_data %>%
+  filter(age_years <+10) %>%
+  select(specimen_id, age_years)
 
 #########################
 # NGS vs ddPCR 
@@ -406,12 +529,14 @@ variant_conc_plot <- mosaic_analysis_data %>%
   geom_hline(yintercept = 1, linetype = "dashed")
 
 ggsave(plot = variant_conc_plot, 
-       filename = paste0("variant_conc_plot_error_bars", format(Sys.time(), "%Y%m%d"),".tiff"),
-       path = "ddpcr_mosaicism/plots/",
-       device= 'tiff',
+       filename = paste0("variant_conc_plot_", 
+                         format(Sys.time(), "%Y%m%d"),".png"),
+       path = "plots/",
+       dpi = 600,
+       device= 'png',
        units = "cm",
-       width = 20,
-       height = 15)
+       width = 15,
+       height = 18)
 
 #########################
 # Variant fractional abundances
@@ -554,49 +679,7 @@ ggsave(plot = fam_only_plot,
        width = 20,
        height = 15)
 
-#########################
-# Service numbers 
-#########################
 
-mosaic_analysis_data %>%
-  group_by(status) %>%
-  summarise(total = n())
-
-# Assays tested
-length(unique(mosaic_analysis_data$assay_id))
-
-# Genes
-length(unique(mosaic_analysis_data$assay_gene))
-
-# Worksheets
-length(unique(mosaic_analysis_data$worksheet))
-
-# Patients tested
-patients_only <- mosaic_analysis_data %>%
-  filter(identity == "patient")
-
-length(unique(patients_only$sample))
-
-mosaicism_targets %>%
-  mutate(assay_gene = sub("_.*", "", channel1_target),
-         assay_gene = sub("c.*", "", assay_gene)) %>%
-  group_by(assay_gene) %>%
-  summarise(total = n()) %>%
-  arrange(desc(total))
-
-patients_with_data <- patient_info %>%
-  left_join(mosaic_analysis_data %>%
-              filter(!base::duplicated(sample)) %>%
-              select(sample, assay_name, variant_fractional_abundance) %>%
-              dplyr::rename(specimen_id = sample),
-            by = "specimen_id") %>%
-  filter(!is.na(assay_name)) %>%
-  mutate(age_years = as.numeric(gsub("-year old", "", age)))
-
-# Children under 10 tested
-patients_with_data %>%
-  filter(age_years <+10) %>%
-  select(specimen_id, age_years)
 
 #########################
 # Patients per assay 
