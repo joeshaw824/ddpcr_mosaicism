@@ -15,6 +15,7 @@
 
 library(tidyverse)
 library(readxl)
+library(ggpubr)
 
 #########################
 # Read in ddPCR data 
@@ -91,7 +92,7 @@ if(anyDuplicated(control_ids) > 0){
 
 single_temp_worksheets <- c("21-4327", "21-4459", "22-0271", "22-1066",
                             "22-1678", "22-2490", "22-2630", "22-2987", 
-                            "22-3704")
+                            "22-3704", "22-3946")
 
 gradient_temp_worksheets <- c("21-0374", "21-2298", "21-3894", "21-4270", 
                               "21-4391", "21-4435", "22-0227", "22-0873", 
@@ -134,7 +135,9 @@ failed_assays <- c(# RHOA_c.514GA
                     "NF1_c.7863_7864ins")
 
 # Sample at high concentration - ddPCR well saturated
-failed_wells <- c("22-3704_A03_22RG-168G0199", "22-3704_B03_22RG-168G0199")
+failed_wells <- c("22-3704_A03_22RG-168G0199", "22-3704_B03_22RG-168G0199",
+                  # Low fluorescence cluster pattern
+                  "22-3946_A08_22RG-168G0199")
 
 assay_information <- read_excel(
   path = "I:/Genetics/DNA Lab/databases/Specialist_Services/Skin/ddPCR_designs_confirmations.xlsx",
@@ -158,7 +161,9 @@ if(anyDuplicated(ngs_results$sample) > 0){
   rm(ngs_results)
 }
 
+#########################
 # Samples not reported as having mosaicism confirmed
+#########################
 
 not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125) 
   # with a confirmed PIK3CA variant.
@@ -186,13 +191,16 @@ not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125)
   "22-3704_A05_22RG-249G0173", "22-3704_B05_22RG-249G0173",
   
   # GNAS variant not confirmed
-  "22-2987_A11_22RG-164G0110", "22-2987_B11_22RG-164G0110")
+  "22-2987_A11_22RG-164G0110", "22-2987_B11_22RG-164G0110",
+  
+  # Paired blood of 22RG-109G0133
+  "22-3946_C09_22RG-095G0169", "22-3946_D09_22RG-095G0169")
 
 #########################
 # Patient demographics
 #########################
 
-patient_info <- read_excel("resources/Mosaic_sequencing_referrals_20220915_0805.xlsx") %>%
+patient_info <- read_excel("resources/Mosaic_sequencing_referrals_20221110_1155.xlsx") %>%
   janitor::clean_names() %>%
   dplyr::rename(specimen_id = test_specimen_id) %>%
   filter(!base::duplicated(specimen_id))
@@ -337,13 +345,13 @@ mosaic_ddpcr_db <- mosaic_data_mod %>%
          identity == "NTC" ~"NTC",
          identity == "normal" ~"normal",
          identity == "patient" & 
-           !worksheet_well_sample %in% not_confirmed ~"patient - mosaicism confirmed",
+           !worksheet_well_sample %in% not_confirmed ~"patient - mosaicism detected",
          identity == "patient" &
-           worksheet_well_sample %in% not_confirmed ~"patient - not confirmed"),
+           worksheet_well_sample %in% not_confirmed ~"patient - mosaicism not detected"),
          
          status = factor(status, levels = c("NTC", "normal", 
-                                            "patient - not confirmed",
-                                            "patient - mosaicism confirmed"))) %>%
+                                            "patient - mosaicism not detected",
+                                            "patient - mosaicism detected"))) %>%
   filter(sample != "G_block") %>%
   filter(!assay_id %in% failed_assays)
 
@@ -374,7 +382,8 @@ mosaic_analysis_data <- mosaic_ddpcr_db %>%
        & substr(well, 1, 1) == "E") |
       # 21-4391 was placed upside down on the thermocycler
       (worksheet == "21-4391" & substr(well, 1, 1) == "D"))
-    & !worksheet_well_sample %in% failed_wells)
+    # Add in 10,000 droplet threshold
+    & !worksheet_well_sample %in% failed_wells & variant_total_droplets > 10000)
 
 #########################
 # Service numbers 
@@ -394,7 +403,7 @@ length(unique(mosaic_analysis_data$assay_gene))
 # Worksheets
 length(unique(mosaic_analysis_data$worksheet))
 
-# Patients tested
+# Patients samples tested
 patients_only <- mosaic_analysis_data %>%
   filter(identity == "patient")
 
@@ -408,7 +417,6 @@ mosaicism_targets %>%
   summarise(total = n()) %>%
   arrange(desc(total))
 
-# This step needs updating
 patients_with_data <- patient_info %>%
   left_join(mosaic_analysis_data %>%
               filter(!base::duplicated(sample)) %>%
@@ -417,6 +425,9 @@ patients_with_data <- patient_info %>%
             by = "specimen_id") %>%
   filter(!is.na(assay_name)) %>%
   mutate(age_years = as.numeric(gsub("-year old", "", age)))
+
+# Number of patients tested
+length(unique((patients_with_data$nhs_number)))
 
 # Children under 10 tested
 patients_with_data %>%
@@ -488,6 +499,81 @@ ggsave(plot = ddpcr_ngs_plot,
        width = 20,
        height = 20)
 
+#########################
+# Concentration plots for each assay
+#########################
+
+plot_variant_concentration <- function(assay_id_input) {
+  
+  plot_caption <- "Single well data only.\nAnnealing temperature: 59 degrees Celsius.\nError bars are Poisson 95% confidence intervals."
+  
+  assay_name_table <- mosaicism_targets %>%
+    filter(assay_id == assay_id_input)
+  
+  assay_name <- assay_name_table[1,2]
+  
+  plot_title <- paste0("Variant concentation: ", assay_name)
+  
+  plot_subtitle <- paste0("Assay ID: ", assay_id_input)
+  
+  conc_plot <- mosaic_analysis_data %>%
+    mutate(status = factor(status, levels = c("NTC", "normal", 
+                                              "patient - mosaicism detected",
+                                              "patient - mosaicism not detected"))) %>%
+    filter(assay_id == assay_id_input) %>%
+    ggplot(aes(x = reorder(worksheet_well_sample, variant_copies_per_ul),
+               y = variant_copies_per_ul)) +
+    scale_fill_manual(values = c(
+      # white
+      "#FFFFFF", 
+      # grey
+      "#999999", 
+      # red
+      "#FF3333",
+      # light blue
+      "#99CCFF")) +
+    geom_point(pch = 21, aes(fill = status), colour = "black", size = 3) +
+    # Use Poisson error, not total error, because these are single 
+    # replicates
+    geom_errorbar(aes(ymin = variant_poisson_conc_min, 
+                      ymax = variant_poisson_conc_max)) +
+    theme_bw() +
+    theme(legend.position = "bottom",
+          panel.grid = element_blank(),
+          legend.title = element_blank(),
+          axis.text.x = element_blank()) +
+    labs(x = "",
+         y = "Variant concentration (copies/ul)",
+         title = plot_title,
+         subtitle = plot_subtitle,
+         caption = plot_caption) +
+    scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                       breaks = c(0, 1, 10, 100)) +
+    geom_hline(yintercept = 1, linetype = "dashed")
+  
+  return(conc_plot)
+}
+
+mosaic_plots <- list()
+
+# Plot a concentration plot for each case
+for (i in unique(mosaic_analysis_data$assay_id)) {
+  
+  new_plot <- plot_variant_concentration(i)
+  
+  mosaic_plots <- list(mosaic_plots, new_plot)
+  rm(new_plot)
+}
+
+# Export mosaic plots for every assay as a single pdf
+ggexport(plotlist = mosaic_plots, filename = paste0(
+  "plots/conc_plots_all_assays_", 
+  format(Sys.time(), "%Y%m%d_%H%M%S"),
+  ".pdf"), res=300)
+
+##################################################
+## OUT OF DATE PLOTS
+##################################################
 #########################
 # Plot themes
 #########################
@@ -702,7 +788,7 @@ facet_plot_theme <- theme(axis.text.x = element_blank(),
                           legend.position = "bottom")
 
 variant_conc_facet <- variant_conc_plot +
-  facet_wrap(~assay_id_name) +
+  facet_wrap(~assay_name) +
   facet_plot_theme
 
 # Some data missing - probably due to NA values
@@ -726,7 +812,7 @@ positives_facet_plot <- fam_positive_plot +
 
 mosaic_analysis_data %>%
   filter(variant_copies_per_ul > 0.2 & variant_copies_per_ul < 3 &
-           status != "patient - not confirmed") %>%
+           status != "patient - mosaicism not detected") %>%
   arrange(status, variant_copies_per_ul) %>%
   mutate(worksheet_well_sample = factor(worksheet_well_sample,
                                         levels = c(worksheet_well_sample))) %>%
@@ -778,4 +864,3 @@ mosaic_analysis_data %>%
   facet_wrap(~assay_id_name) +
   facet_plot_theme
   
-#########################
