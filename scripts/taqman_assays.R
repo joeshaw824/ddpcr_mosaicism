@@ -49,7 +49,13 @@ for (filename in taqman_files){
   rm(tmp_dat)
 }
 
-write.csv(collated_files, "ddpcr_mosaicism/resources/collated_assay_information.csv",
+collated_files_edit <- collated_files %>%
+  # Remove duplicates
+  filter(!duplicated(assay_id)) %>%
+  # Remove whitespace from assay ID
+  mutate(assay_id = gsub(" ", "", assay_id))
+
+write.csv(collated_files_edit, "ddpcr_mosaicism/resources/collated_assay_information.csv",
           row.names = FALSE)
 
 #########################

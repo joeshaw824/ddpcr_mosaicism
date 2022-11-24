@@ -407,8 +407,6 @@ length(unique(mosaic_analysis_data$worksheet))
 patients_only <- mosaic_analysis_data %>%
   filter(identity == "patient")
 
-length(unique(patients_only$sample))
-
 # How many TaqMan assays are there for each gene?
 mosaicism_targets %>%
   mutate(assay_gene = sub("_.*", "", channel1_target),
@@ -433,6 +431,45 @@ length(unique((patients_with_data$nhs_number)))
 patients_with_data %>%
   filter(age_years <+10) %>%
   select(specimen_id, age_years)
+
+#########################
+# Patients per assay 
+#########################
+
+patients_per_assay <- mosaic_analysis_data %>%
+  filter(identity == "patient") %>%
+  group_by(assay_id, assay_name) %>%
+  summarise(patients_tested = length(unique(sample))) %>%
+  arrange(desc(patients_tested))
+
+# TaqMan assays cost £273.22
+
+taqman_cost <- 273.22
+
+total_taqman_cost <- length(unique(patients_per_assay$assay_id)) * taqman_cost
+
+average_cost_per_sample <- total_taqman_cost / sum(patients_per_assay$patients_tested)
+
+# 23 patients tested with GNAQ_c.548GA
+taqman_cost/23
+
+finance_plot_subtitle <- paste0("Each assay costs: £", taqman_cost, "  Average cost per sample: £",
+                                round(average_cost_per_sample, 2))
+
+taqman_cost_plot <- ggplot(patients_per_assay, aes(x = reorder(assay_name, patients_tested), y = patients_tested)) +
+  geom_col() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(x = "", y = "Patients tested", title = "Usage of bespoke TaqMan assays for mosaicism",
+       subtitle = finance_plot_subtitle)
+
+ggsave(plot = taqman_cost_plot, 
+       filename = paste0("taqman_cost_plot", format(Sys.time(), "%Y%m%d"), ".tiff"),
+       path = "I:/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/ddPCR mosaic cost analysis", 
+       device= 'tiff',
+       units = "cm",
+       width = 15,
+       height = 10)
 
 #########################
 # NGS vs ddPCR 
@@ -766,19 +803,6 @@ ggsave(plot = fam_only_plot,
        height = 15)
 
 
-
-#########################
-# Patients per assay 
-#########################
-
-patients_per_assay <- mosaic_analysis_data %>%
-  filter(identity == "patient") %>%
-  group_by(assay_id, assay_name) %>%
-  summarise(patients_tested = length(unique(sample))) %>%
-  arrange(desc(patients_tested))
-
-write.csv(patients_per_assay, "ddpcr_mosaicism/database/patients_per_assay.csv",
-          row.names = FALSE)
 
 #########################
 # All assays facet wrap
