@@ -542,8 +542,6 @@ ggsave(plot = ddpcr_ngs_plot,
 
 plot_variant_concentration <- function(assay_id_input) {
   
-  plot_caption <- "Single well data only.\nAnnealing temperature: 59 degrees Celsius.\nError bars are Poisson 95% confidence intervals."
-  
   assay_name_table <- mosaicism_targets %>%
     filter(assay_id == assay_id_input)
   
@@ -553,12 +551,20 @@ plot_variant_concentration <- function(assay_id_input) {
   
   plot_subtitle <- paste0("Assay ID: ", assay_id_input)
   
-  conc_plot <- mosaic_analysis_data %>%
+  filtered_data <- mosaic_analysis_data %>%
     mutate(status = factor(status, levels = c("NTC", "normal", 
                                               "patient - mosaicism detected",
                                               "patient - mosaicism not detected"))) %>%
-    filter(assay_id == assay_id_input) %>%
-    ggplot(aes(x = reorder(worksheet_well_sample, variant_copies_per_ul),
+    filter(assay_id == assay_id_input)
+  
+  filtered_wells <- nrow(filtered_data)
+  
+  filtered_worksheets <- length(unique(filtered_data$worksheet))
+  
+  plot_caption <- paste0("Single well data only.\nAnnealing temperature: 59 degrees Celsius.\nError bars are Poisson 95% confidence intervals. \n",
+                        "Number of wells: ", filtered_wells, ". Number of worksheets: ", filtered_worksheets, ".")
+  
+  conc_plot <- ggplot(filtered_data, aes(x = reorder(worksheet_well_sample, variant_copies_per_ul),
                y = variant_copies_per_ul)) +
     scale_fill_manual(values = c(
       # white
@@ -585,7 +591,9 @@ plot_variant_concentration <- function(assay_id_input) {
          subtitle = plot_subtitle,
          caption = plot_caption) +
     scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
-                       breaks = c(0, 1, 10, 100)) +
+                       breaks = c(0, 1, 10, 100),
+                       # Added limits to keep y axis consistent between plots
+                       limits = c(0, 300)) +
     geom_hline(yintercept = 1, linetype = "dashed")
   
   return(conc_plot)
@@ -608,9 +616,41 @@ ggexport(plotlist = mosaic_plots, filename = paste0(
   format(Sys.time(), "%Y%m%d_%H%M%S"),
   ".pdf"), res=300)
 
-##################################################
-## OUT OF DATE PLOTS
-##################################################
+#########################
+# Reference copies per microlitre
+#########################
+
+# 25ng gDNA = 25000pg
+# 3.3pg per haploid genome
+# 25000 / 3.3 = 7576 copies per well
+# 7576 / 20 = 379 copies per ul
+
+mosaic_analysis_data %>%
+  # Use only normal control DNAs, as they have a consistent input of 25ng
+  # (sometimes patient samples have very little DNA and are added neat)
+  filter(identity == "normal" & !is.na(reference_copies_per_ul)) %>%
+  ggplot(aes(x = reorder(assay_name, desc(reference_copies_per_ul)), y = reference_copies_per_ul,
+             colour = assay_name))+
+  geom_jitter() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90),
+        #panel.grid = element_blank(),
+        legend.title = element_blank(),
+        legend.position = "none") +
+  labs(x = "",
+       y = "Reference copies per microlitre",
+       title = "Reference copies per microlitre in normal controls") +
+  geom_hline(yintercept = 379, linetype = "dashed") +
+  ylim(0, 2000)
+
+ggsave(plot = reference_copies_plot, 
+       filename = paste0("reference_copies_plot_", format(Sys.time(), "%Y%m%d"),".tiff"),
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff',
+       units = "cm",
+       width = 15,
+       height = 15)
+
 #########################
 # Plot themes
 #########################
@@ -618,17 +658,17 @@ ggexport(plotlist = mosaic_plots, filename = paste0(
 plot_theme <- theme(legend.position = "none",
                     panel.grid = element_blank(),
                     legend.title = element_blank())
-  
+
 plot_fill <- scale_fill_manual(values = c(
   # white
   "#FFFFFF", 
-  # grey
-  "#999999", 
-  # light blue
-  "#99CCFF", 
-  # red
-  "#FF3333"))
-  
+           # grey
+           "#999999", 
+           # light blue
+           "#99CCFF", 
+           # red
+           "#FF3333"))
+           
 plot_jitter <- geom_jitter(pch = 21, aes(fill = status), colour = "black", size = 2)
 
 plot_point <- geom_point(pch = 21, aes(fill = status), colour = "black", size = 2)
@@ -637,7 +677,13 @@ plot_point <- geom_point(pch = 21, aes(fill = status), colour = "black", size = 
 # Variant concentrations
 #########################
 
+num_worksheets <- length(unique(mosaic_analysis_data$worksheet))
+assay_number <- length(unique(mosaic_analysis_data$assay_id))
+num_wells <- nrow(mosaic_analysis_data %>%
+                    filter(!is.na(variant_copies_per_ul)))
+
 variant_conc_plot <- mosaic_analysis_data %>%
+  filter(!is.na(variant_copies_per_ul)) %>%
   ggplot(aes(x = status,
              y = variant_copies_per_ul)) +
   plot_fill +
@@ -646,10 +692,14 @@ variant_conc_plot <- mosaic_analysis_data %>%
   plot_theme +
   labs(x = "",
        y = "Variant concentration (copies/ul)",
-       title = "Variant concentation in ddPCR mosaic data") +
+       title = paste0("Variant concentation in ddPCR mosaic data"),
+       caption = paste0(num_wells, " wells of ddPCR data are displayed. The data is for ", assay_number, 
+                        " assays tested on ", num_worksheets, " worksheets. 
+                        All testing was performed at 59 degrees Celsius annealing temperature")) +
   scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
-                     breaks = c(0, 1, 10, 100)) +
-  geom_hline(yintercept = 1, linetype = "dashed")
+                     breaks = c(0, 1, 0.5, 10, 100)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_hline(yintercept = 0.5, linetype = "dashed")
 
 ggsave(plot = variant_conc_plot, 
        filename = paste0("variant_conc_plot_", 
@@ -660,6 +710,33 @@ ggsave(plot = variant_conc_plot,
        units = "cm",
        width = 15,
        height = 18)
+
+#########################
+# Variant copies per well
+#########################
+
+variant_copies_plot <- mosaic_analysis_data %>%
+  ggplot(aes(x = status,
+             y = variant_copies_per_20ul_well)) +
+  plot_fill +
+  plot_jitter +
+  theme_bw() +
+  plot_theme +
+  labs(x = "",
+       y = "Variant molecules per well",
+       title = paste0("Variant molecules in ddPCR mosaic data (", num_wells, " wells, ", 
+                      assay_number, " assays)")) +
+  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
+                     breaks = c(0, 10, 20, 100, 1000, 6000)) +
+  geom_hline(yintercept = 20, linetype = "dashed")
+
+ggsave(plot = variant_copies_plot, 
+       filename = paste0("variant_copies_plot_", format(Sys.time(), "%Y%m%d"),".tiff"),
+       path = "ddpcr_mosaicism/plots/", 
+       device= 'tiff',
+       units = "cm",
+       width = 20,
+       height = 15)
 
 #########################
 # Variant fractional abundances
@@ -681,7 +758,7 @@ variant_fraction_plot <- mosaic_analysis_data %>%
   scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
                      limits = c(0, 5),
                      breaks = c(0, 0.3, 1, 5)) +
-  geom_hline(yintercept = 0.2, linetype = "dashed") 
+  geom_hline(yintercept = 0.3, linetype = "dashed") 
 
 ggsave(plot = variant_fraction_plot, 
        filename = paste0("variant_fraction_plot_error_bars", format(Sys.time(), "%Y%m%d"),".tiff"),
@@ -689,64 +766,6 @@ ggsave(plot = variant_fraction_plot,
        device= 'tiff',
        units = "cm",
        width = 20,
-       height = 15)
-
-#########################
-# Variant copies per well
-#########################
-
-well_number <- nrow(mosaic_analysis_data)
-assay_number <- length(unique(mosaic_analysis_data$assay_id))
-
-variant_copies_plot <- mosaic_analysis_data %>%
-  ggplot(aes(x = status,
-             y = variant_copies_per_20ul_well)) +
-  plot_fill +
-  plot_jitter +
-  theme_bw() +
-  plot_theme +
-  labs(x = "",
-       y = "Variant molecules per well",
-       title = paste0("Variant molecules in ddPCR mosaic data (", well_number, " wells, ", 
-                      assay_number, " assays)")) +
-  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
-                     breaks = c(0, 10, 100, 1000, 6000)) +
-  geom_hline(yintercept = 20, linetype = "dashed")
-
-ggsave(plot = variant_copies_plot, 
-       filename = paste0("variant_copies_plot_", format(Sys.time(), "%Y%m%d"),".tiff"),
-       path = "ddpcr_mosaicism/plots/", 
-       device= 'tiff',
-       units = "cm",
-       width = 20,
-       height = 15)
-
-#########################
-# Reference copies per well
-#########################
-
-# 25ng gDNA = 25000pg
-# 3.3pg per haploid genome
-# 25000 / 3.3 = 7575 copies per well
-
-reference_copies_plot <- mosaic_analysis_data %>%
-  ggplot(aes(x = identity, y = reference_copies_per_20ul_well))+
-  geom_boxplot() +
-  theme_bw() +
-  theme(axis.ticks.x = element_blank(),
-        panel.grid = element_blank(),
-        legend.title = element_blank()) +
-  labs(x = "",
-       y = "Reference molecules per well",
-       title = "Reference molecules in ddPCR mosaic data") +
-  geom_hline(yintercept = 7575, linetype = "dashed")
-
-ggsave(plot = reference_copies_plot, 
-       filename = paste0("reference_copies_plot_", format(Sys.time(), "%Y%m%d"),".tiff"),
-       path = "ddpcr_mosaicism/plots/", 
-       device= 'tiff',
-       units = "cm",
-       width = 15,
        height = 15)
 
 #########################
@@ -827,39 +846,6 @@ variant_copies_facet <- variant_copies_plot +
 positives_facet_plot <- fam_positive_plot +
   facet_wrap(~assay_id_name) +
   facet_plot_theme
-
-#########################
-# Do the error bars overlap?
-#########################
-
-# Very slightly at the end of the normal range
-
-mosaic_analysis_data %>%
-  filter(variant_copies_per_ul > 0.2 & variant_copies_per_ul < 3 &
-           status != "patient - mosaicism not detected") %>%
-  arrange(status, variant_copies_per_ul) %>%
-  mutate(worksheet_well_sample = factor(worksheet_well_sample,
-                                        levels = c(worksheet_well_sample))) %>%
-  ggplot(aes(x = worksheet_well_sample,
-             y = variant_copies_per_ul))  +
-  scale_fill_manual(values = c(
-    # grey
-    "#999999",
-    # red
-    "#FF3333")) +
-  plot_point +
-  theme_bw() +
-  plot_theme +
-  geom_errorbar(aes(ymin = variant_poisson_conc_min, ymax = variant_poisson_conc_max)) +
-  theme(axis.text.x = element_blank(),
-        legend.position = "bottom") +
-  labs(x = "",
-       y = "Variant concentration (copies/ul)",
-       title = "Variant concentation between normal controls and confirmed mosaic samples") +
-  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
-                     limits = c(0, 1000),
-                     breaks = c(0, 1, 10, 100, 1000)) +
-  geom_hline(yintercept = 1, linetype = "dashed")
 
 #########################
 # Potential G-block contamination
