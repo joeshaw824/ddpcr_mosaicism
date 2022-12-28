@@ -489,11 +489,11 @@ ngs_vs_ddpcr <- mosaic_ddpcr_db %>%
   filter(worksheet_well_sample != "22-0271_M12_22RG-004G0015") %>%
   inner_join(ngs_results,
               by = "sample") %>%
-  mutate(variant_check = ifelse(assay_name == variant_assay, TRUE, FALSE))
-
-# Check data is for the same variant
-ngs_vs_ddpcr %>%
-  select(worksheet_well_sample, assay_name, variant_assay, variant_check)
+  mutate(variant_check = ifelse(assay_name == variant_assay, TRUE, FALSE),
+         # Annoyingly the ACTB_c.1043_1044ins18 assay has the variant on VIC
+         variant_fractional_abundance2 = ifelse(assay_name == "ACTB_c.1043_1044ins18", 
+                                                100-variant_fractional_abundance,
+                                                variant_fractional_abundance))
 
 sample_number <- nrow(ngs_vs_ddpcr)
 
@@ -511,22 +511,62 @@ setdiff(single_temp_all$sample, ngs_vs_ddpcr$sample)
 # 21RG-131G0259 - BRAF variant
 
 # Plot all results
-ddpcr_ngs_plot <- ggplot(ngs_vs_ddpcr, aes(x = ngs_percent,
-                         y = variant_fractional_abundance)) +
-  geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min,
-                    ymax = variant_poisson_fractional_abundance_max),
-                alpha = 0.2) +
+ddpcr_ngs_plot <- ngs_vs_ddpcr %>%
+  filter(!is.na(ngs_percent) & !is.na(variant_fractional_abundance2)) %>%
+  ggplot(aes(x = ngs_percent,
+                         y = variant_fractional_abundance2)) +
+  #geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min,
+                    #ymax = variant_poisson_fractional_abundance_max),
+                #alpha = 0.2) +
+  geom_point(size = 2, pch = 21, fill = "white") +
+  geom_abline(linetype = "dashed") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  labs(x = "NGS read counter variant fraction (%)", y = "ddPCR variant fraction (%)",
+       title = paste("ddPCR and NGS results for", sample_number, " patient samples"))
+  #scale_x_continuous(limits = c(0, 20),
+  #breaks = seq(from = 0, to = 20, by = 1)) +
+  #scale_y_continuous(limits = c(0, 20),
+  #breaks = seq(from = 0, to = 20, by = 1))
+
+ddpcr_ngs_plot_pearson <- ngs_vs_ddpcr %>%
+  filter(!is.na(ngs_percent) & !is.na(variant_fractional_abundance2)) %>%
+  ggplot(aes(x = ngs_percent,
+             y = variant_fractional_abundance2)) +
+  #geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min,
+  #ymax = variant_poisson_fractional_abundance_max),
+  #alpha = 0.2) +
   geom_point(size = 2, pch = 21, fill = "white") +
   geom_abline(linetype = "dashed") +
   theme_bw() +
   theme(panel.grid = element_blank()) +
   labs(x = "NGS read counter variant fraction (%)", y = "ddPCR variant fraction (%)",
        title = paste("ddPCR and NGS results for", sample_number, " patient samples")) +
-  ggpubr::stat_cor(method = "pearson", label.x = 8, label.y = 2) +
-  scale_x_continuous(limits = c(0, 20),
-  breaks = seq(from = 0, to = 20, by = 1)) +
-  scale_y_continuous(limits = c(0, 20),
-  breaks = seq(from = 0, to = 20, by = 1))
+  ggpubr::stat_cor(method = "pearson", label.x = 8, label.y = 2)
+
+# Wrap by each assay
+ddpcr_ngs_plot +
+  facet_wrap(~assay_name)
+
+# Assays which are potentially picking up pseudogene as well
+suspicious_assays <- c("NF1_c.4330AG", "PIK3CA_c.1810TC", 
+                       "PIK3CA_c.1624GA", "GNAQ_c.548GA", "GNAQ_c.547CG")
+
+ngs_vs_ddpcr %>%
+  filter(!is.na(ngs_percent) & !is.na(variant_fractional_abundance2)) %>%
+  filter(assay_name %in% suspicious_assays) %>%
+  ggplot(aes(x = ngs_percent,
+             y = variant_fractional_abundance2)) +
+  geom_point(size = 2, pch = 21, fill = "white") +
+  geom_errorbar(aes(ymin = variant_poisson_fractional_abundance_min,
+                    ymax = variant_poisson_fractional_abundance_max),
+                    alpha = 0.2) +
+  geom_abline(linetype = "dashed") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  ylim(0, 20) +
+  xlim(0, 20) +
+  facet_wrap(~assay_name)
 
 ggsave(plot = ddpcr_ngs_plot, 
        filename = paste0("ddpcr_vs_ngs_", format(Sys.time(), "%Y%m%d"), ".tiff"),
