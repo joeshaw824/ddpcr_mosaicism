@@ -8,8 +8,6 @@
 #########################
 
 library(tidyverse)
-library(readxl)
-library(ggpubr)
 
 setwd("//fsdept/deptdata$/Regional Genetics Service/Validation Documents/Mosaic/ddPCR/")
 
@@ -50,5 +48,14 @@ for (filename in taqman_files){
   collated_files <-rbind(collated_files, tmp_dat)
   rm(tmp_dat)
 }
+
+collated_files_edit <- collated_files %>%
+  # Remove duplicates
+  filter(!duplicated(assay_id)) %>%
+  # Remove whitespace from assay ID
+  mutate(assay_id = gsub(" ", "", assay_id))
+
+write.csv(collated_files_edit, "ddpcr_mosaicism/resources/collated_assay_information.csv",
+          row.names = FALSE)
 
 #########################
