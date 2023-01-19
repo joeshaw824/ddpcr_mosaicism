@@ -200,7 +200,7 @@ not_confirmed <- c(# Matched blood from a skin sample (21RG-326G0125)
 # Patient demographics
 #########################
 
-patient_info <- read_excel("resources/Mosaic_sequencing_referrals_20221110_1155.xlsx") %>%
+patient_info <- read_excel("resources/Mosaic_sequencing_referrals_20221230_0916.xlsx") %>%
   janitor::clean_names() %>%
   dplyr::rename(specimen_id = test_specimen_id) %>%
   filter(!base::duplicated(specimen_id))
@@ -798,7 +798,27 @@ variant_fraction_plot <- mosaic_analysis_data %>%
   scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
                      limits = c(0, 5),
                      breaks = c(0, 0.3, 1, 5)) +
-  geom_hline(yintercept = 0.3, linetype = "dashed") 
+  geom_hline(yintercept = 0.3, linetype = "dashed") +
+  geom_hline(yintercept = 0.12, linetype = "dashed")
+
+normal_data <- mosaic_analysis_data %>%
+  mutate(variant_fractional_abundance = ifelse(is.na(variant_fractional_abundance),
+                                               0, variant_fractional_abundance)) %>%
+  filter(status == "normal" & variant_fractional_abundance < 50)
+
+median(normal_data$variant_fractional_abundance)
+max(normal_data$variant_fractional_abundance)
+min(normal_data$variant_fractional_abundance)
+
+ggplot(normal_data %>%
+         filter(), aes(x = status,
+             y = variant_fractional_abundance)) +
+  geom_boxplot() +
+  theme_bw() +
+  plot_theme +
+  labs(x = "",
+       y = "Variant percent (%)") +
+  ylim(0, 0.25)
 
 ggsave(plot = variant_fraction_plot, 
        filename = paste0("variant_fraction_plot_error_bars", format(Sys.time(), "%Y%m%d"),".tiff"),
@@ -807,6 +827,81 @@ ggsave(plot = variant_fraction_plot,
        units = "cm",
        width = 20,
        height = 15)
+
+#########################
+# Sample DNA concentrations
+#########################
+
+dna_concentrations <- read_excel("resources/sample_dna_concentrations.xlsx")
+
+samples_with_sources <- dna_concentrations %>%
+  left_join(patient_info %>%
+              select(specimen_id, specimen_source, specimen_type), 
+            by = "specimen_id") %>%
+  filter(!is.na(specimen_source) & !base::duplicated(specimen_id))
+
+ggplot(samples_with_sources, aes(x = specimen_source, y = dna_concentration_qubit)) +
+  geom_jitter() +
+  theme_bw()
+
+ggplot(samples_with_sources, aes(y = dna_concentration_qubit)) +
+  geom_boxplot() +
+  theme_bw()
+
+source_summary <- samples_with_sources %>%
+  group_by(specimen_source) %>%
+  summarise(total = n())
+
+type_summary <- samples_with_sources %>%
+  group_by(specimen_type) %>%
+  summarise(total = n())
+
+dna_high_low <- samples_with_sources %>%
+  mutate(concentration_category = ifelse(dna_concentration_qubit > 50, "high", "low")) %>%
+  group_by(concentration_category) %>%
+  summarise(total = n())
+
+# Number of samples for each source type
+ggplot(source_summary, aes(x = reorder(specimen_source, total), y = total)) +
+  geom_col() +
+  theme_bw() +
+  plot_theme
+
+ggplot(samples_with_sources %>%
+         filter(specimen_source %in% c("Blood, Venous", "Skin")), 
+       aes(x = reorder(specimen_id, dna_concentration_qubit),
+                                 y = dna_concentration_qubit,
+                                 colour = specimen_source)) +
+  geom_point(size = 2) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "right")
+
+
+#########################
+# Skin vs blood
+#########################
+
+repeat_results_with_sample_type <- mosaic_ddpcr_db %>%
+  # Merged results for single temp worksheets only
+  filter(worksheet %in% single_temp_worksheets & substr(well, 1, 1) == "M" &
+           !worksheet_well_sample %in% failed_wells & variant_total_droplets > 10000) %>%
+  left_join(patient_info %>%
+              dplyr::rename(sample = specimen_id) %>%
+              select(sample, mrn, nhs_number, specimen_source),
+            by = "sample") %>%
+  filter(base::duplicated(nhs_number, fromLast = TRUE) |
+           base::duplicated(nhs_number, fromLast = FALSE) |
+           base::duplicated(mrn, fromLast = TRUE) |
+           base::duplicated(mrn, fromLast = FALSE)) %>%
+  filter(!is.na(nhs_number))
+
+ggplot(repeat_results_with_sample_type, aes(x = sample,
+                                     y = variant_fractional_abundance
+                                     )) +
+  geom_point(aes(fill = specimen_source)) +
+  facet_wrap(~nhs_number)
 
 #########################
 # All FAM+ droplets
@@ -887,30 +982,4 @@ positives_facet_plot <- fam_positive_plot +
   facet_wrap(~assay_id_name) +
   facet_plot_theme
 
-#########################
-# Potential G-block contamination
-#########################
-
-# Plot for patient with NF1 variant and background GNAS c601CT
-mosaic_analysis_data %>%
-  filter(sample %in% c(
-    # Skin
-    "22RG-004G0015", 
-    # Blood
-    "20RG-209G0042")) %>%
-  ggplot(aes(x = status,
-             y = variant_positives)) +
-  plot_fill +
-  plot_jitter +
-  theme_bw() +
-  plot_theme +
-  labs(x = "",
-       y = "All FAM+ droplets",
-       title = "FAM+ droplets in ddPCR wells") +
-  scale_y_continuous(trans=scales::pseudo_log_trans(base = 10),
-                     #limits = c(0, 10000),
-                     breaks = c(0, 10, 100, 1000, 10000)) +
-  geom_hline(yintercept = 20, linetype = "dashed") +
-  facet_wrap(~assay_id_name) +
-  facet_plot_theme
-  
+################################################################################
